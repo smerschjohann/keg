@@ -46,10 +46,7 @@ func dedupeEnv(env []string) []string {
 	seen := make(map[string]int) // name -> index in out
 	out := make([]string, 0, len(env))
 	for _, e := range env {
-		name, _ := cutEnvEntry(e)
-		if name == "" {
-			continue
-		}
+		name := envName(e)
 		if idx, exists := seen[name]; exists {
 			out[idx] = e // later value wins
 			continue
