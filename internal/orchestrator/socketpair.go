@@ -27,7 +27,7 @@ func Socketpair() (host, guest *os.File, err error) {
 func StripDeniedEnv(env []string, denied []string) []string {
 	out := make([]string, 0, len(env))
 	for _, e := range env {
-		name, _, _ := cutEnvEntry(e)
+		name, _ := cutEnvEntry(e)
 		if slices.Contains(denied, name) {
 			continue
 		}
@@ -36,11 +36,11 @@ func StripDeniedEnv(env []string, denied []string) []string {
 	return out
 }
 
-func cutEnvEntry(e string) (name, value string, ok bool) {
+func cutEnvEntry(e string) (name, value string) {
 	for i := 0; i < len(e); i++ {
 		if e[i] == '=' {
-			return e[:i], e[i+1:], true
+			return e[:i], e[i+1:]
 		}
 	}
-	return e, "", false
+	return e, ""
 }

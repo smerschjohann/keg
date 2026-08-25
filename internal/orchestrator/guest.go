@@ -23,7 +23,7 @@ func init() {
 // FD contract: fd 3 = proxy channel, fd 4 = DNS, fd 5 = runner
 // (see FDProxy/FDDNS/FDRunner).
 func guestMain() {
-	os.Setenv("CODE_KEG", "1")
+	_ = os.Setenv("CODE_KEG", "1") // best effort; nothing depends on failure modes
 	env := StripDeniedEnv(os.Environ(), HostDeniedEnvVars)
 
 	if len(os.Args) < 2 {
@@ -32,7 +32,9 @@ func guestMain() {
 	}
 	// Replace the process image; environment is the stripped one plus any
 	// values set above. No bridges exist yet (WP-M2/M3 wire them up).
-	err := syscall.Exec(os.Args[1], os.Args[1:], dedupeEnv(env))
+	// The command comes from the keg host orchestrator (trusted parent);
+	// arbitrary argv is the whole point of this entrypoint.
+	err := syscall.Exec(os.Args[1], os.Args[1:], dedupeEnv(env)) // #nosec G702 -- trusted caller (host-side orchestrator)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "keg guest: exec %s: %v\n", os.Args[1], err)
 		os.Exit(127)
@@ -44,8 +46,8 @@ func dedupeEnv(env []string) []string {
 	seen := make(map[string]int) // name -> index in out
 	out := make([]string, 0, len(env))
 	for _, e := range env {
-		name, _, ok := cutEnvEntry(e)
-		if !ok {
+		name, _ := cutEnvEntry(e)
+		if name == "" {
 			continue
 		}
 		if idx, exists := seen[name]; exists {
