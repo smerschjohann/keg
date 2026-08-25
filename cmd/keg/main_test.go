@@ -91,10 +91,17 @@ func TestCLI_StubCommandsRun(t *testing.T) {
 	}
 }
 
-func TestCLI_RunRejectsMissingCommandSeparator(t *testing.T) {
-	// `keg run` without `-- <cmd>` is valid only in interactive mode;
-	// both must parse today (stub), real behavior lands with WP-M1.
-	if err := runCLI(t, "run"); err != nil {
-		t.Fatalf("bare run should be accepted by the stub: %v", err)
+func TestCLI_RunWithoutConfigFailsWithClearError(t *testing.T) {
+	// run is implemented since WP-M1; in a directory without
+	// .keg.yaml it must fail naming the expected file.
+	cmd := NewCommand()
+	var out strings.Builder
+	cmd.Writer = &out
+	err := cmd.Run(context.Background(), []string{"keg", "run"})
+	if err == nil {
+		t.Fatal("run without repo config must fail")
+	}
+	if !strings.Contains(err.Error(), ".keg.yaml") {
+		t.Errorf("error must name .keg.yaml: %v", err)
 	}
 }

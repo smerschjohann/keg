@@ -5,7 +5,9 @@ package orchestrator
 
 import (
 	"fmt"
+	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/smerschjohann/keg/internal/config"
@@ -31,6 +33,18 @@ const (
 	OverlayEphemeral                // invisible tmpfs upper layer
 	OverlayDisk                     // persistent on-disk layer
 )
+
+// String returns the CLI-facing name of the overlay mode.
+func (o Overlay) String() string {
+	switch o {
+	case OverlayEphemeral:
+		return "ephemeral"
+	case OverlayDisk:
+		return "disk"
+	default:
+		return "plain"
+	}
+}
 
 // HostDeniedEnvVars are never passed into the sandbox: proxy settings and
 // cloud credentials would leak either connectivity or secrets
@@ -58,6 +72,13 @@ type Plan struct {
 	TmpDir      string // host instance temp dir
 	ResolvConf  string // host path of the injected resolv.conf ("" = none)
 	SecretDir   string // host dir ro-bound to /run/secrets ("" = none)
+
+	// BwrapPath overrides the bubblewrap binary (tests inject a stub).
+	BwrapPath string
+	// Stdin/Stdout/Stderr wire the sandbox process (default: os.Std*).
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 
 	Mounts   []config.Mount    // custom binds, template-resolved
 	EnvUnset []string          // additional vars to strip beyond HostDeniedEnvVars
@@ -109,6 +130,9 @@ func BuildArgs(p Plan) ([]string, error) {
 		"--unshare-all",
 		"--die-with-parent",
 		"--disable-userns",
+		// Keep the channel FDs (3..2+FDPreserved) open across exec
+		// (CONCEPT.md §9 FD map).
+		"--preserve-fds", strconv.Itoa(FDPreserved),
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",

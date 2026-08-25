@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -108,6 +109,7 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 		"--unshare-all",
 		"--die-with-parent",
 		"--disable-userns",
+		"--preserve-fds", "3",
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
@@ -312,6 +314,18 @@ func TestBuildArgs_DeterministicAcrossRuns(t *testing.T) {
 	}
 	if strings.Join(a1, "\x00") != strings.Join(a2, "\x00") {
 		t.Error("BuildArgs must be deterministic")
+	}
+}
+
+// TestFDPlan_PreserveFdsInArgs pins the FD inheritance contract:
+// bwrap must pass fds 3..5 (proxy/DNS/runner) into the sandbox.
+func TestFDPlan_PreserveFdsInArgs(t *testing.T) {
+	args, err := BuildArgs(basePlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPair(args, "--preserve-fds", strconv.Itoa(FDPreserved)) {
+		t.Errorf("args must contain --preserve-fds %d, got %v", FDPreserved, args)
 	}
 }
 

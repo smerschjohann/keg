@@ -12,6 +12,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// cliCommand aliases the urfave/cli command type so run.go stays readable.
+type cliCommand = cli.Command
+
 // NewCommand builds the keg root command. It is factored out so tests
 // can drive the CLI in-process (smoke tests, help-text assertions).
 func NewCommand() *cli.Command {
@@ -39,9 +42,22 @@ func NewCommand() *cli.Command {
 				Name:    "run",
 				Aliases: []string{"r"},
 				Usage:   "start a sandbox and run a command inside it (default: interactive shell)",
-				Action: func(_ context.Context, _ *cli.Command) error {
-					fmt.Println("run: not implemented yet (WP-M1, IMPLEMENTATION_PLAN.md §3)")
-					return nil
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "repo",
+						Usage: "repository root (default: current working directory)",
+					},
+					&cli.BoolFlag{
+						Name:  "ephemeral",
+						Usage: "discard all repo writes when the sandbox exits (invisible tmpfs overlay)",
+					},
+					&cli.StringFlag{
+						Name:  "disk-overlay",
+						Usage: "use a persistent on-disk layer with the given NAME",
+					},
+				},
+				Action: func(ctx context.Context, c *cli.Command) error {
+					return runAction(ctx, c)
 				},
 			},
 			{
