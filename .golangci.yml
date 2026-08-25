@@ -1,0 +1,52 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  # Standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose       # HTTP-Responses schließen
+    - copyloopvar     # veraltete Loop-Kopien erkennen
+    - errorlint       # %w-Wrapping, type-assertions auf errors
+    - gosec           # Sicherheitslinter — bei keg Pflicht
+    - misspell
+    - nilerr          # err != nil mit return nil
+    - noctx           # http-Calls ohne Context
+    - prealloc
+    - revive          # Naming/Best-Practice (exported, package-comments, …)
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+  settings:
+    gosec:
+      # Diese Klassen sind KERNAUFGABE von keg (bwrap-Args aus Config,
+      # Datei-Binds aus Mount-Regeln). Ausnahmen nur je Stelle mit
+      # begründetem #nosec-Kommentar, nie global in der Produktion:
+      excludes:
+        - G204 # Subprocess mit variablen Argumenten (bwrap/Jobs)
+        - G304 # Datei öffnen mit variablem Pfad (Mounts/Secrets)
+    revive:
+      rules:
+        - name: package-comments
+        - name: exported
+        - name: var-naming
+        - name: error-strings
+        - name: context-as-argument
+        - name: indent-error-flow
+        - name: unconditional-recursion
+  exclusions:
+    rules:
+      # Tests dürfen vereinfachen: fixe Ports, ignorierte Errors in Fixtures.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - noctx
+
+formatters:
+  enable:
+    - gofumpt
