@@ -1,0 +1,41 @@
+# CI runs lint, unit tests (with race detector) and bwrap integration tests.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          args: --timeout 5m
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make tidy
+      - run: make build
+      - run: make test
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # bubblewrap provides the sandbox runtime; skip logic lives in the
+      # tests themselves (visible skip with reason, never silent).
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: make integration
