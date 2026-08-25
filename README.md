@@ -57,12 +57,18 @@ make tidy            # go mod tidy muss diff-frei bleiben
 TDD ist Pflicht (`AGENTS.md`): keine Produktionszeile ohne vorher roten
 Test. Integrationstests skippen sichtbar mit Grund, wenn bwrap fehlt.
 
-### Bekannte Umgebungseigenheit (Dev-Microvm)
+### Bekannte Umgebungseigenheiten
 
-In der aktuellen Dev-Microvm verwirft der Kernel Upperdir-Schreibdaten beim
-Namespace-Teardown — `--disk-overlay`-Persistenz über den Sandbox-Exit ist
-dort nicht beobachtbar, auf Zielhardware (echtes ext4) laut Bestand schon.
-Details: Kommentar an `TestSandboxDiskOverlay`.
+* **Overlay-Persistenz:** Unprivilegiertes OverlayFS persistiert
+  Upperdir-Writes zuverlässig nur mit `--ro-bind / /` als Lower-Layer —
+  ohne Root-Bind verwirft dieser Kernel die Writes beim Namespace-Teardown.
+  keg bindet den Host-Root daher read-only ein (Prinzip wie im legacy
+  `dist/jail`-Prototyp); `/home` und `/tmp` werden per tmpfs verdeckt,
+  Schreibzugriff bleibt auf Repo/Layer beschränkt. Details:
+  `THREAT_MODEL.md` §5.1.
+* Direkt aufeinanderfolgende Läufe auf denselben Disk-Layer können kurz mit
+  „Device or resource busy“ kollidieren (lazy Namespace-Teardown des
+  vorherigen Overlay-Mounts). Layer-Management mit Retry folgt in WP-M6.
 
 ## Dokumentation
 

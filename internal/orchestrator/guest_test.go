@@ -55,14 +55,14 @@ func TestInvariant_GuestStripsHostEnv(t *testing.T) {
 
 func TestGuest_PreservesExplicitEnv(t *testing.T) {
 	cmd := reexec.Command(GuestCommandName, "/bin/sh", "-c", `printf "%s" "$GUEST_ALLOWED,$HOME"`)
-	env := append(os.Environ(), "GUEST_ALLOWED=yes", "HOME=/sandbox-home")
+	env := append(os.Environ(), "GUEST_ALLOWED=yes", "HOME=/home/sandbox")
 	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("guest run: %v", err)
 	}
-	if out.String() != "yes,/sandbox-home" {
+	if out.String() != "yes,/home/sandbox" {
 		t.Errorf("explicit env lost: %q", out.String())
 	}
 }

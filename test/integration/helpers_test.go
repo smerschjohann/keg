@@ -63,7 +63,7 @@ func runInSandbox(t *testing.T, dir string, overlay orchestrator.Overlay, script
 func planFor(repoRoot, tmpDir string, overlay orchestrator.Overlay, command []string) (orchestrator.Plan, error) {
 	plan := orchestrator.Plan{
 		RepoRoot:    repoRoot,
-		SandboxHome: "/sandbox-home",
+		SandboxHome: "/home/sandbox",
 		TmpDir:      tmpDir,
 		Mounts:      nil,
 		EnvSet: map[string]string{

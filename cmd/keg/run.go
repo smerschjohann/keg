@@ -57,7 +57,7 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 
 	plan := orchestrator.Plan{
 		RepoRoot:    root,
-		SandboxHome: "/sandbox-home",
+		SandboxHome: "/home/sandbox",
 		Mounts:      repo.Mounts,
 		EnvUnset:    repo.Env.Unset,
 		EnvSet:      map[string]string{},

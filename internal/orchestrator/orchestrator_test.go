@@ -12,7 +12,7 @@ import (
 func basePlan() Plan {
 	return Plan{
 		RepoRoot:    "/work/repo",
-		SandboxHome: "/sandbox-home",
+		SandboxHome: "/home/sandbox",
 		TmpDir:      "/tmp/keg-i1",
 		ResolvConf:  "/tmp/keg-i1/resolv.conf",
 		Command:     []string{"/bin/bash"},
@@ -103,29 +103,27 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 	}
 	// Expected layout includes env hygiene: every host-denied var must be
 	// stripped via --unsetenv before HOME/TMPDIR are set.
-	want := make([]string, 0, 48+2*len(HostDeniedEnvVars)+8)
+	want := make([]string, 0, 20+2*len(HostDeniedEnvVars)+8)
 	want = append(want,
 		"--unshare-all",
 		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",
+		// Read-only root bind first (before proc/dev so it cannot shadow
+		// them): required for unprivileged overlayfs to persist upperdir
+		// writes (same principle as the legacy jail: host root as read-only
+		// lower layer). Everything outside declared write targets stays
+		// read-only (CONCEPT.md "Rest read-only oder nicht vorhanden",
+		// THREAT_MODEL §6).
+		"--ro-bind", "/", "/",
 		"--proc", "/proc",
 		"--dev", "/dev",
+		// Fresh tmpfs over host /tmp and /home before anything lands there;
+		// this hides the caller's real home directory entirely.
 		"--tmpfs", "/tmp",
-		// Base system: proven layout from run-sandbox.sh — real binds for
-		// /bin and /lib (merged-/usr safe), -try for optional locations.
-		"--ro-bind", "/usr", "/usr",
-		"--ro-bind", "/bin", "/bin",
-		"--ro-bind", "/lib", "/lib",
-		"--ro-bind-try", "/lib64", "/lib64",
-		"--ro-bind", "/etc/passwd", "/etc/passwd",
-		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
-		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
-		"--ro-bind-try", "/etc/pki", "/etc/pki",
-		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
-		"--ro-bind-try", "/etc/crypto-policies", "/etc/crypto-policies",
+		"--tmpfs", "/home",
 		"--bind", "/work/repo", "/work/repo",
-		"--tmpfs", "/sandbox-home",
+		"--tmpfs", "/home/sandbox",
 		"--chdir", "/work/repo",
 		"--ro-bind", "/tmp/keg-i1/resolv.conf", "/etc/resolv.conf",
 	)
@@ -133,10 +131,10 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 		want = append(want, "--unsetenv", v)
 	}
 	want = append(want,
-		"--setenv", "HOME", "/sandbox-home",
+		"--setenv", "HOME", "/home/sandbox",
 		"--setenv", "TMPDIR", "/tmp",
 		"--setenv", "SHELL", "/bin/bash",
-		"--setenv", "PATH", "/work/repo/.cache/bin:/sandbox-home/.local/bin:/usr/local/bin:/usr/bin:/bin",
+		"--setenv", "PATH", "/work/repo/.cache/bin:/home/sandbox/.local/bin:/usr/local/bin:/usr/bin:/bin",
 		"--", "/bin/bash",
 	)
 	got := strings.Join(args, "\n")

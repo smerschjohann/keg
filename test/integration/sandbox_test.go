@@ -39,8 +39,8 @@ echo "MARKER:$SANDBOX_MARKER"
 			return nil
 		},
 		"HOME": func(v string) error {
-			if v != "/sandbox-home" {
-				t.Errorf("HOME = %q, want /sandbox-home", v)
+			if v != "/home/sandbox" {
+				t.Errorf("HOME = %q, want /home/sandbox", v)
 			}
 			return nil
 		},
@@ -126,17 +126,12 @@ func TestSandboxEphemeralOverlay(t *testing.T) {
 	}
 }
 
-// TestSandboxDiskOverlay verifies the persistent-layer mounting works
-// inside a sandbox run: writes land in the overlay (readable back) and the
-// host repo stays clean.
-//
-// NOTE on cross-exit persistence: whether upperdir writes survive the
-// sandbox exit depends on the host environment. On the target VM (real
-// ext4 disk at /var/lib/containers/storage) this holds per run-sandbox.sh;
-// inside the current dev microvm the kernel discards upperdir writes at
-// namespace teardown regardless of filesystem placement. That is an
-// environment property, not a keg defect — revisit when running on
-// target hardware.
+// TestSandboxDiskOverlay proves a persistent layer survives sandbox
+// exits: run 1 writes into the overlay, run 2 (fresh sandbox, same layer)
+// reads it back — while the host repo stays clean. Upper dirs live on the
+// ext4 container-disk storage base; the read-only root bind makes
+// unprivileged overlayfs persist writes (same principle as dist/jail:
+// host root as read-only lower layer).
 func TestSandboxDiskOverlay(t *testing.T) {
 	storageBase := "/var/lib/containers/storage/sandbox"
 	if _, err := os.Stat(storageBase); err != nil {
@@ -157,30 +152,40 @@ func TestSandboxDiskOverlay(t *testing.T) {
 		}
 	}
 
-	plan, err := planFor(dir, t.TempDir(), orchestrator.OverlayDisk,
-		[]string{"/bin/sh", "-c", `echo persisted > layer.txt && cat layer.txt && grep -q persisted layer.txt`})
-	if err != nil {
-		t.Fatal(err)
+	runLayered := func(script string) string {
+		var out bytes.Buffer
+		plan, err := planFor(dir, t.TempDir(), orchestrator.OverlayDisk,
+			[]string{"/bin/sh", "-c", script})
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan.DiskLayerRW = filepath.Join(layer, "rw")
+		plan.DiskLayerWork = filepath.Join(layer, "work")
+		plan.Stdout = &out
+		plan.Stderr = &out
+		sb, err := orchestrator.Launch(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("launch: %v", err)
+		}
+		code, err := sb.Wait()
+		sb.Close()
+		if err != nil || code != 0 {
+			t.Fatalf("layered run failed: code=%d err=%v\n%s", code, err, out.String())
+		}
+		return out.String()
 	}
-	plan.DiskLayerRW = filepath.Join(layer, "rw")
-	plan.DiskLayerWork = filepath.Join(layer, "work")
 
-	var out bytes.Buffer
-	plan.Stdout = &out
-	plan.Stderr = &out
-	sb, err := orchestrator.Launch(context.Background(), plan)
-	if err != nil {
-		t.Fatalf("launch: %v", err)
-	}
-	code, err := sb.Wait()
-	sb.Close()
-	if err != nil || code != 0 {
-		t.Fatalf("overlay run failed: code=%d err=%v\n%s", code, err, out.String())
-	}
+	runLayered(`echo persisted > layer.txt && cat layer.txt`)
 
-	// Host repo stays clean; the write lives in the overlay.
+	// Host repo stays clean; the write lives in the layer.
 	if _, err := os.Stat(dir + "/layer.txt"); !os.IsNotExist(err) {
 		t.Errorf("disk-overlay write must stay in the layer, not the host repo")
+	}
+
+	// A fresh sandbox on the same layer sees the previous run's data.
+	got := runLayered(`cat layer.txt`)
+	if strings.TrimSpace(got) != "persisted" {
+		t.Errorf("persistent layer lost data across exits: got %q", got)
 	}
 }
 
