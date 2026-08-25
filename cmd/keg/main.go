@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/moby/sys/reexec"
 	"github.com/urfave/cli/v3"
 )
 
@@ -80,6 +81,11 @@ func NewCommand() *cli.Command {
 }
 
 func main() {
+	// Reentrant entrypoint: inside the sandbox this binary is re-executed
+	// under the guest name; Init returns true there and runs the guest.
+	if reexec.Init() {
+		return
+	}
 	if err := NewCommand().Run(context.Background(), os.Args); err != nil {
 		log.Fatal(err)
 	}
