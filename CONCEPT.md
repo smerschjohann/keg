@@ -73,6 +73,43 @@ sauberes Lifecycle-Management (Sandbox-Exit ⇒ FD schließt ⇒ Daemon beendet 
 
 ---
 
+### 2.3 Abgrenzung: pasta/passt vs. Socketpair-Kanäle
+
+[pasta](https://passt.top) (Nachfolger von slirp4netns, Standard bei rootless
+Podman) löst auf den ersten Blick dasselbe Problem: unprivilegiertes Netzwerk
+für einen Namespace. Die Architekturen verfolgen aber gegensätzliche Ziele:
+
+| | **pasta** | **keg-Kanäle (A–E)** |
+|---|---|---|
+| Philosophie | „Gib mir ein Netz“ — transparenter IP-Stack per Tap-Device | „Gib mir kontrollierte Löcher“ — keine L3/L4-Konnektivität, nur explizite Kanäle |
+| Policy-Ebene | L3/L4: IPs, Ports, Pakete — FQDN-Filterung nur indirekt (DNS→IP-Mapping, brüchig bei CDNs/geteilten IPs) | L7: Domain-/CONNECT-Ziele, DNS-Namen — exakt das SNI-Whitelist-Modell der Zielumgebung |
+| Protokolle | TCP + UDP + ICMP, beliebige Raw-Sockets, HTTP/3/QUIC, mDNS | Nur was als Kanal implementiert ist: HTTP(S)-Proxy, DNS, Port-Rückkanal, Runner, Control |
+| Proxy-Variablen nötig? | Nein (transparent) | Ja — gewollt: Tools, die `HTTP_PROXY` ignorieren, laufen bewusst ins Leere |
+| Audit | Flows/IPs (Domain-Zuordnung verloren) | Jede Entscheidung als Domain-Event (`ERLAUBT`/`BLOCKIERT`) |
+| Externe Dependency | pasta-Binary (eigene Angriffsfläche im Netz-Pfad) | keine — Kernel + Go-Stdlib + muxado |
+| Isolation der Sandbox selbst | Namespace hat reale IP/Gateway/Routen | Nur Loopback — kein Interface, kein Routing, nichts zu missbrauchen |
+
+**Fazit:** pasta würde die Kernziele von keg konterkarieren. Das System
+bildet ja gerade die restriktive Umgebung (CoreDNS + SNI-Proxy) nach —
+pasta liefert dagegen maximale Transparenz und würde die Deny-by-default-
+Invarianten (THREAT_MODEL §8) aushebeln. Für UDP-Outbound oder
+proxy-resistente Tools gibt es absichtlich keinen stillen Fallback.
+
+**Wo pasta doch Sinn ergibt (mögliche Zukunftsoption):** Als expliziter
+Opt-in-Downgrade `network.mode: pasta` für einzelne Aufgaben mit echtem
+Bedarf an UDP/ICMP/Raw-TCP (HTTP/3-Tests, Service-Discovery/mDNS,
+Ping-Checks). Der Modus müsste dann:
+
+* pro Lauf deklariert und sichtbar sein („⚠︎ Netzwerk-Policy herabgestuft“),
+* ohne die L7-Whitelist laufen (klar dokumentiertes Residualrisiko),
+* Port-Rückkanäle weiterhin nur auf 127.0.0.1 binden.
+
+**Leichtgewichtigere Alternative für den häufigsten Fall:** Statt eines
+ganzen IP-Stacks genügt oft ein generischer **TCP-Relay-Kanal** (Erweiterung
+von Kanal A): erlaubte `host:port`-Paare aus einer neuen Whitelist-Sektion
+(`network.allowed_endpoints`) werden über muxado durchgereicht — Raw-TCP
+zu definierten Zielen, ohne pasta und ohne Aufweichung des Deny-by-default.
+
 ## 3. Gesamtarchitektur
 
 ```
@@ -562,6 +599,47 @@ dieselbe effektive `storage_base` des jeweiligen Ziel-Repos. Die
 **gemerged** — eine Maschine kann lokal mehr freigeben, ohne das Repo
 anzufassen.
 
+### 4.9 Rückkanal: Port-Forwarding (Host → Sandbox-Loopback)
+
+Dev-Server laufen **in** der Sandbox — aber Tests wie Playwright laufen auf
+dem **Host** (bzw. als delegierter Host-Job) und müssen die Services
+erreichen können. Da die Sandbox nur eigenes Loopback hat, gibt es dafür
+einen kontrollierten **Rückkanal (Kanal E)**: Der Host exponiert deklarierte
+Sandbox-Ports auf seinem eigenen Loopback.
+
+```
+Host 127.0.0.1:3000 ──► Listener (keg) ══ Kanal E (muxado) ══► Guest-Forwarder
+                                                                     └─► 127.0.0.1:3000 in der Sandbox
+```
+
+* **Deklaration im Repo (Bedarf):**
+  ```yaml
+  ports:
+    - "3000"              # Sandbox :3000  -> Host 127.0.0.1:3000
+    - "5432:15432"        # Sandbox :5432  -> Host 127.0.0.1:15432
+    - name: dev-server
+      port: 8080
+      dynamic: true       # Host-Port frei wählbar, wird als KEG_PORT_dev-server
+                          # in die Sandbox-Env geschrieben (Kollisionssicher)
+  ```
+* **Mechanik:** Host-seitig bindet keg je Eintrag einen TCP-Listener;
+  jede eingehende Verbindung öffnet einen muxado-Stream über Kanal E,
+  der Guest-Forwarder verbindet sie mit dem Ziel auf dem Sandbox-Loopback.
+  Nur TCP (UDP-Dev-Dienste sind bis auf Weiteres out of scope).
+* **Bind-Regel:** Host-seitig wird ausschließlich `127.0.0.1` gebunden —
+  niemals `0.0.0.0`. Damit bleibt der Rückkanal lokal; andere Rechner
+  sehen nichts.
+* **Isolation bleibt intakt:** Die Sandbox erhält weiterhin **keinen**
+  ausgehenden Weg — sie kann Verbindungen nur *annehmen*, die der Forwarder
+  einbringt. Invarianten 1 und 2 (§12 Threat Model) gelten unverändert:
+  auch dieser Verkehr läuft durch einen polizeilich kontrollierten Kanal.
+* **Lifecycle:** Listener werden beim Start gebunden (Kollision ⇒ klarer
+  Fehler oder `dynamic: true`) und bei Sandbox-Ende freigegeben.
+* **Playwright-Workflow:** Der delegierte Host-Job (`just delegate
+  test-playwright …`) erreicht den in der Sandbox laufenden Dev-Server
+  schlicht unter `http://127.0.0.1:<port>` — kein Umweg über Container-
+  Netze, keine IP-Ermittlung.
+
 ---
 
 ## 5. Konfiguration: `.keg.yaml`
@@ -635,6 +713,12 @@ secrets:
   - name: ai_token          # -> /run/secrets/ai_token
   - name: db_password
     env: DB_PASSWORD_FILE   # zusätzlich: DB_PASSWORD_FILE=/run/secrets/db_password
+
+# Port-Rückkanal: Sandbox-Services auf dem Host-Loopback exponieren (§4.9).
+# Host-seitig wird ausschließlich 127.0.0.1 gebunden; deny-by-default.
+ports:
+  - "3000"                  # Dev-Server -> Host 127.0.0.1:3000
+  - "5432:15432"            # Sandbox:5432 -> Host:15432
 
 network:
   isolated: true        # false => --share-net ohne Proxy-Zwang (Ausnahmefall)
@@ -884,15 +968,153 @@ Host-Runner. Fehlerbilder (Runner-Socket fehlt, DNS blockiert, fehlender
 Toolchain-Cache) werden mit den bekannten, selbsterklärenden Meldungen
 geliefert.
 
+Neben dem Konsolen-Modus existieren zwei weitere Einbindungswege: die
+**Go-Library** (Embedding) und der **Fernsteuerbare Daemon** (gRPC) —
+siehe §8.
+
 ---
 
-## 8. FD- und Protokoll-Map
+## 8. Go-API & Remote-Steuerung
+
+Neben dem Konsolen-Start soll keg in zwei weiteren Modi nutzbar sein:
+als **einbettbare Go-Library** (das eigene Programm startet und kontrolliert
+Sandboxen programmatisch) und als **Fernsteuerbarer Daemon** (gRPC-API, z. B.
+für IDE-Plugins, CI-Runner oder Agent-Frameworks). Beide Modi nutzen exakt
+dieselbe Policy-Engine — die YAML bleibt maßgeblich, die API ist nur ein
+anderer Weg hinein.
+
+### 8.1 Paketstruktur & Refactoring
+
+```
+cmd/keg            # CLI (thin wrapper)
+internal/orchestrator  # Kern: bwrap-Bau, Socketpairs, Daemons, Lifecycle
+internal/runner        # Delegation-Daemon
+internal/egress        # Proxy + DNS
+pkg/keg            # öffentliche Library-API (§8.2)
+proto/keg/v1       # gRPC-Schema für den Daemon-Modus (§8.3)
+```
+
+Der Orchestrator wird so refactored, dass CLI, Library und Daemon nur
+unterschiedliche *Treiber* auf denselben Kern sind. Der `reexec`-Mechanismus
+bleibt unverändert (Self-Start in bwrap).
+
+### 8.2 Library-API (Embedding)
+
+```go
+import "example.com/keg/pkg/keg"
+
+sb, err := keg.Launch(ctx,
+    keg.WithRepo("/work/repo"),          // Default: CWD
+    keg.WithConfigFile(".keg.yaml"), // Default: Repo-Root
+    keg.WithOverlay(keg.Ephemeral),  // oder Disk("agent-42")
+    keg.WithVar("mock_data", "/data/m"), // Vars-Override
+)
+if err != nil { /* Validierungs-/Startfehler */ }
+defer sb.Close()
+
+// Befehl IN der Sandbox ausführen (streaming):
+run := sb.Command(ctx, "go", "test", "./...")
+run.Stdout(os.Stdout).Stderr(os.Stderr)
+rc, err := run.Wait()
+
+// Kurzsyntax:
+out, rc, err := sb.Output(ctx, "git", "status", "--porcelain")
+
+// Zustand & Metadaten:
+fmt.Println(sb.ID(), sb.Config().Network.AllowedDomains)
+
+// Secret-Dateien lesen (Pfad in der Sandbox, Inhalt host-refreshed):
+_ = sb.SecretPath("ai_token") // /run/secrets/ai_token
+```
+
+Designprinzipien:
+
+* **Handle-Pattern:** `*Sandbox` implementiert `io.Closer`; `Close()` fährt
+  Refresher/Daemons herunter, killt Prozesse, räumt Temp/Layer auf — dieselbe
+  Logik wie der CLI-Cleanup.
+* **Kontext-getrieben:** `ctx.Cancel` beendet Sandbox und alle Kind-Prozesse
+  (entspricht Ctrl+C im CLI-Modus).
+* **Kein Policy-Umweg:** `Launch` validiert identisch zur CLI; es gibt keine
+  Option, Whitelists zu überschreiben, die nicht auch per User-Config ginge.
+
+**Technische Erweiterung: Guest-Agent statt exec-and-forget.** Im Library-
+Modus kann der Aufrufer nicht einfach das Terminal erben — der Entrypoint
+in der Sandbox wird daher zu einem kleinen **Guest-Agent** (PID 1): Er
+startet wie bisher Bridges/DNS, bedient aber zusätzlich einen vierten Kanal
+(Kanal D, eigener Socketpair, muxado-Session), über den der Host
+`Exec`-Requests schickt: spawn, stdin-Chunks, stdout/stderr-Events,
+signal, exit. Damit sind parallele Befehle, Signale und PTY-Verhalten
+sauber steuerbar. Im reinen CLI-Modus verhält sich der Agent transparent
+wie bisher (`exec <cmd>`).
+
+### 8.3 Remote-API (Daemon-Modus)
+
+Der Daemon unterstützt mehrere Listener-Typen — TCP **und** Unix-Socket als
+gleichwertige Alternativen:
+
+```bash
+keg serve                                    # Default: Unix-Socket
+keg serve --listen unix:///run/keg/api.sock   # expliziter Unix-Pfad
+keg serve --listen 127.0.0.1:7777            # TCP nur auf Loopback
+keg serve --listen 0.0.0.0:7777 --auth token # Netz: nur mit Auth
+```
+
+| Listener | Adressierung | Standard-Absicherung |
+|---|---|---|
+| `unix://…` (Default) | Dateipfad, Dir-Mode `0770`/Socket `0660` | Dateirechte des Socket-Pfads; Gruppen-basierte Zugriffskontrolle |
+| TCP `127.0.0.1:…` | Loopback | Token-Auth verpflichtend bei mehr als einer User-Kennung |
+| TCP `0.0.0.0:…` / Hostname | Netzwerk | Nur mit explizitem `--auth token` (bzw. mTLS); sonst Startverweigerung |
+
+Unix-Sockets sind der bevorzugte Modus für lokale Verbraucher (IDE-Plugin,
+CI-Runner auf demselben Rechner): kein Port im Spiel, Zugriffsrechte über
+das Dateisystem, und die Verbindung erbt die UID des Clients — der Daemon
+can diese für Audit-Zeilen (`SO_PEERCRED`) mitloggen.
+
+```proto
+service Keg {
+  rpc CreateSandbox(CreateRequest) returns (SandboxStatus);
+  rpc Exec(stream ExecRequest) returns (stream ExecEvent); // stdin/events duplex
+  rpc Status(SandboxId) returns (SandboxStatus);
+  rpc List(google.protobuf.Empty) returns (stream SandboxStatus);
+  rpc Stop(SandboxId) returns (google.protobuf.Empty);
+}
+// ExecEvent: stdout | stderr | exited(rc) | error(msg) — framing wie Runner
+```
+
+Typische Verbraucher: IDE-Integration (Tests aus der IDE heraus in der
+Projekt-Policy laufen lassen), CI-Job-Runner, LLM-Agent-Frameworks (ein
+Agent, viele isolierte Werf-Läufe via `--ephemeral`).
+
+Sicherheitsregeln für den Daemon:
+
+* **Loopback/Unix-Socket by default;** Netz-Exposition ist explizites Opt-in
+  mit Token-Auth (mTLS optional). Kein Root.
+* Jeder RPC-Aufrufer unterliegt derselben `.keg.yaml`-Policy wie lokal;
+  die API schafft keine neuen Freigaben.
+* Secrets bleiben Host-seitig: Über die API werden nie Secret-Inhalte
+  übertragen, nur Pfade/Existenz.
+* Audit: jeder Create/Exec/Stop wird geloggt (Aufrufer-ID, Repo, Command).
+* Ressourcen-Limits: maximale Anzahl paralleler Sandboxen pro Caller
+  konfigurierbar.
+
+### 8.4 Auswirkungen auf Bestehendes
+
+* FD-Map (§9) erhält optionalen **Kanal D (Control)** — nur im
+  Library/Daemon-Modus aktiv.
+* Die CLI bleibt unverändert nutzbar; alle Beispiele in §7 gelten weiter.
+* Neuer Meilenstein M9 (s. §11).
+
+---
+
+## 9. FD- und Protokoll-Map
 
 | FD (Sandbox) | Kanal | Multiplexing | Protokoll darüber |
 |---|---|---|---|
 | 3 | Proxy | muxado-Session | HTTP/CONNECT-Streams |
 | 4 | DNS | Length-Prefix-Frames (RFC 1035 TCP-Framing) | DNS-Nachrichten |
 | 5 | Runner | Length-Prefix-JSON (b64-Argumente) | Job-Requests/Responses |
+| 6 | Control (optional) | muxado-Session | Guest-Agent: Exec-Requests, stdin/stdout/stderr-Events, Signale — nur im Library/Daemon-Modus (§8) |
+| 7 | Ports (optional) | muxado-Session | Rückkanal: Host-Listener → Sandbox-Loopback (§4.9); nur deklarierte Ports, Host-Bind nur 127.0.0.1 |
 
 Alle Kanäle sind unidirektional verbunden (Socketpair), authentifiziert
 dadurch, dass nur der keg-Prozess die FDs besitzt — kein netzwerksichtiger
@@ -900,7 +1122,7 @@ Socket, nichts für andere User erreichbar.
 
 ---
 
-## 9. Technologie-Stack
+## 10. Technologie-Stack
 
 | Baustein | Wahl | Begründung |
 |---|---|---|
@@ -911,10 +1133,11 @@ Socket, nichts für andere User erreichbar.
 | DNS | `miekg/dns` | CoreDNS-Kern, eingebettet ohne externes Binary |
 | Config | `gopkg.in/yaml.v3` | Standard, strict decoding |
 | FS-Hardening | Landlock LSM (Kernel ≥ 5.13, optional) | Unprivilegierte Syscall-Ebene-FS-Restriction als zweite Verteidigungslinie (§6.1) |
+| Remote-API | gRPC (+ optional grpc-gateway für REST) | Streaming-fähige Duplex-Events, Codegen für IDE-/Agent-Integrationen (§8.3) |
 
 ---
 
-## 10. Umsetzungsplan (Meilensteine)
+## 11. Umsetzungsplan (Meilensteine)
 
 1. **M1 – Skeleton:** Go-Orchestrator, reexec-Loop, bwrap mit Basis-Binds,
    `--unshare-all`, interaktive Shell. *Ergebnis: Shell in isolierter Box.*
@@ -924,7 +1147,8 @@ Socket, nichts für andere User erreichbar.
 3. **M3 – DNS-Kanal:** Embedded DNS (hosts/whitelist/upstream), resolv.conf-
    Injektion, UDP/TCP-Bridge.
 4. **M4 – Konfiguration:** `.keg.yaml` (Parsing, Validierung, dynamische
-   bwrap-Args), Templates go/java/node/python.
+   bwrap-Args), Templates go/java/node/python, Port-Rückkanal (Kanal E,
+   §4.9) für Playwright-gegen-Sandbox-Workflows.
 5. **M5 – Delegation:** Runner-Daemon in Go, Whitelist mit allen drei
    Regelklassen inkl. Raw-Argument-Patterns (Git-Semantik aus dem Bestand),
    Streaming, Exit-Codes, `sandbox.just`-Kompatibilität (`CODE_SANDBOX`).
@@ -935,13 +1159,16 @@ Socket, nichts für andere User erreichbar.
 8. **M8 – Hardening:** Secret-Bind-Refresher, Landlock-Support (best
    effort), `forbidden_args_matching`-Erweiterung des Raw-Matchers,
    CGO/Linker-Erreichbarkeitsprüfung.
+9. **M9 – Go-API & Daemon:** Refactoring in `internal/orchestrator` +
+   `pkg/keg`, Guest-Agent mit Control-Kanal, `keg serve` mit
+   gRPC-API, Auth/Audit/Limits.
 
 Jeder Meilenstein ist einzeln testbar; M1–M3 decken bereits den
 Haupt-Use-Case (offline-fähige Go-Sandbox mit kontrolliertem Egress) ab.
 
 ---
 
-## 11. Risiken & offene Punkte
+## 12. Risiken & offene Punkte
 
 | Risiko | Bewertung | Gegenmaßnahme |
 |---|---|---|
@@ -951,6 +1178,7 @@ Haupt-Use-Case (offline-fähige Go-Sandbox mit kontrolliertem Egress) ab.
 | Parallele Instanzen teilen Delegations-Ziele | Bekannt aus Bestand | Dokumentieren; Serialisierung auf Rezept-Ebene |
 | Windows/macOS-Hosts | Out of scope | bwrap ist Linux-only; Doku entsprechend kennzeichnen |
 | Landlock auf alten Kernels (< 5.13) | Niedrig | Best effort: Warnung + Weiter ohne Landlock (`security.landlock: auto`) |
+| Bedarf an UDP/ICMP/Raw-TCP-Egress (HTTP/3, mDNS, Ping) | Mittel (konstruktiv nicht abgedeckt) | Bewusst kein pasta-Default; Opt-in-Downgrade `network.mode: pasta` oder leichtgewichtig `network.allowed_endpoints`-TCP-Relay (§2.3) |
 | UDP-Stau am DNS-Kanal bei langsamen Upstream-Lookups | Niedrig | Begrenzte Queue + sauberes Framing; keine Drops (§4.4) |
 | Delegierte Jobs umgehen Sandbox-Netz-Policy | Mittel | `forbidden_args_matching` für netzwerkrelevante Raw-Regeln (§4.5) |
 
