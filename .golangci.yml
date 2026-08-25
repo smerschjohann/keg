@@ -12,7 +12,7 @@ linters:
     - copyloopvar     # veraltete Loop-Kopien erkennen
     - errorlint       # %w-Wrapping, type-assertions auf errors
     - gosec           # Sicherheitslinter — bei keg Pflicht
-    - misspell
+    - misspell        # Code/Comments/CLI-Texte sind englisch (AGENTS.md §8)
     - nilerr          # err != nil mit return nil
     - noctx           # http-Calls ohne Context
     - prealloc

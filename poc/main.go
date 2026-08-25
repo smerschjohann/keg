@@ -1,23 +1,24 @@
-// keg-poc — minimaler Proof of Concept für den Socketpair-Durchstich.
+// keg-poc — minimal proof of concept for the socketpair tunnel through
+// bwrap.
 //
-// Ein Binary, zwei Rollen (gesteuert per Env-Var, kein reexec nötig):
+// One binary, two roles (switched via env var, no reexec needed):
 //
-//	HOST:   erzeugt zwei Unix-Socketpairs, startet sich selbst via bwrap
-//	        --unshare-all und übergibt die Sandbox-Enden als FD 3 + FD 4.
-//	GUEST:  läuft im Sandbox-Netz-Namespace (nur Loopback):
-//	          FD 3 = Echo-Kanal      (roher Durchstich)
-//	          FD 4 = TCP-Tunnel      (Kanal-E-Muster: Host -> Sandbox-Loopback)
+//	HOST:   creates two unix socketpairs, starts itself via bwrap
+//	        --unshare-all and passes the sandbox ends as FD 3 + FD 4.
+//	GUEST:  runs inside the sandbox network namespace (loopback only):
+//	          FD 3 = echo channel     (raw tunnel)
+//	          FD 4 = TCP tunnel       (channel-E pattern: host -> sandbox loopback)
 //
-// Gezeigt wird:
+// What is demonstrated:
 //
-//	Phase 1: Host schreibt in sein Socketpair-Ende → Guest echo't zurück.
-//	         => Kommunikation durchquert die Isolation.
-//	Phase 2: Host verbindet sich auf 127.0.0.1:18080 (Host-Listener),
-//	         der Verkehr wird über FD 4 in die Sandbox getunnelt und dort
-//	         mit einem HTTP-Server auf 127.0.0.1:8080 beantwortet.
-//	         => Der "innere" Socket ist von außen erreichbar.
-//	Negativnachweis: Die Sandbox hat kein externes Netz — Dial-Versuche
-//	         nach draußen scheitern, obwohl der Tunnel funktioniert.
+//	Phase 1: host writes into its socketpair end -> guest echoes back.
+//	         => communication crosses the isolation boundary.
+//	Phase 2: host connects to 127.0.0.1:18080 (host-side listener),
+//	         traffic is tunneled over FD 4 into the sandbox and answered
+//	         by an HTTP server on 127.0.0.1:8080 there.
+//	         => the "inner" socket is reachable from the outside.
+//	Negative proof: the sandbox has no external network — outbound dials
+//	         fail while the tunnel works.
 package main
 
 import (
@@ -34,8 +35,8 @@ import (
 )
 
 const (
-	guestHTTPPort    = "8080"  // HTTP-Server IMMER in der Sandbox
-	hostForwardPort  = "18080" // Listener AUF DEM HOST (Kanal E)
+	guestHTTPPort    = "8080"  // HTTP server INSIDE the sandbox
+	hostForwardPort  = "18080" // listener ON THE HOST (channel E)
 	guestReadyMarker = "KEG_POC_READY\n"
 )
 
@@ -50,18 +51,18 @@ func main() {
 // ---------------------------------------------------------------- HOST ----
 
 func host() {
-	fmt.Println("=== keg PoC: Socketpair-Durchstich durch bwrap ===")
+	fmt.Println("=== keg PoC: socketpair tunnel through bwrap ===")
 
 	if _, err := exec.LookPath("bwrap"); err != nil {
-		fatal("bwrap nicht gefunden")
+		fatal("bwrap not found")
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		fatal("Executable nicht auflösbar: %v", err)
+		fatal("cannot resolve executable: %v", err)
 	}
 	exeDir := filepath.Dir(exe)
 
-	// Zwei Socketpairs: [0]=Host-Ende, [1]=Sandbox-Ende (wird FD 3 bzw. 4)
+	// Two socketpairs: [0]=host end, [1]=sandbox end (becomes FD 3 resp. 4)
 	echoPair := mustSocketpair("echo")
 	tunPair := mustSocketpair("tunnel")
 
@@ -70,11 +71,11 @@ func host() {
 		"--symlink", "usr/bin", "/bin",
 		"--symlink", "usr/lib", "/lib",
 		"--symlink", "usr/lib64", "/lib64",
-		"--ro-bind", exeDir, exeDir, // das eigene Binary erreichbar halten
+		"--ro-bind", exeDir, exeDir, // keep our own binary reachable
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
-		"--unshare-all", // PID/IPC/NET/UTS/User/Cgroup — volle Isolation
+		"--unshare-all", // PID/IPC/NET/UTS/User/Cgroup — full isolation
 		"--die-with-parent",
 		exe,
 	)
@@ -83,11 +84,11 @@ func host() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Println("[host] starte bwrap --unshare-all ...")
+	fmt.Println("[host] starting bwrap --unshare-all ...")
 	if err := cmd.Start(); err != nil {
-		fatal("bwrap-Start fehlgeschlagen: %v", err)
+		fatal("failed to start bwrap: %v", err)
 	}
-	echoPair[1].Close() // Kind-Enden im Parent schließen
+	echoPair[1].Close() // close child ends in the parent
 	tunPair[1].Close()
 	defer func() {
 		_ = cmd.Process.Kill()
@@ -97,37 +98,37 @@ func host() {
 	echo := echoPair[0]
 	tun := tunPair[0]
 
-	// Auf Bereitschaft des Gastes warten (erste Zeile über den Echo-Kanal)
+	// Wait for guest readiness (first line over the echo channel)
 	reader := bufio.NewReader(echo)
 	line, err := reader.ReadString('\n')
 	if err != nil || line != guestReadyMarker {
-		fatal("Gast nicht bereit (got %q, err=%v)", line, err)
+		fatal("guest not ready (got %q, err=%v)", line, err)
 	}
-	fmt.Println("[host] Gast gemeldet (über FD-3-Kanal): READY")
+	fmt.Println("[host] guest reported ready (via FD-3 channel): READY")
 
-	// ---- Phase 1: Echo über den rohen Durchstich ----
-	fmt.Println("\n--- Phase 1: Echo über Unix-Socketpair (FD 3) ---")
+	// ---- Phase 1: echo over the raw tunnel ----
+	fmt.Println("\n--- Phase 1: echo over unix socketpair (FD 3) ---")
 	for i := 1; i <= 3; i++ {
-		msg := fmt.Sprintf("hallo aus dem host #%d", i)
+		msg := fmt.Sprintf("hello from the host #%d", i)
 		start := time.Now()
 		if _, err := fmt.Fprintln(echo, msg); err != nil {
-			fatal("senden fehlgeschlagen: %v", err)
+			fatal("send failed: %v", err)
 		}
 		reply, err := reader.ReadString('\n')
 		if err != nil {
-			fatal("kein Echo: %v", err)
+			fatal("no echo: %v", err)
 		}
-		fmt.Printf("[host] gesendet: %-32q empfangen: %-32q (%v)\n",
+		fmt.Printf("[host] sent: %-32q received: %-32q (%v)\n",
 			msg, trimNL(reply), time.Since(start).Round(time.Microsecond))
 	}
-	fmt.Println("✓ Durchstich steht: Host <-> Sandbox kommunizieren über FD 3.")
+	fmt.Println("✓ Tunnel established: host <-> sandbox communicate over FD 3.")
 
-	// ---- Phase 2: TCP-Durchgriff auf den inneren Loopback ----
-	fmt.Printf("\n--- Phase 2: Tunnel zu Sandbox-%s (Kanal-E-Muster, FD 4) ---\n", guestHTTPPort)
+	// ---- Phase 2: TCP reach-through to the inner loopback ----
+	fmt.Printf("\n--- Phase 2: tunnel to sandbox-%s (channel-E pattern, FD 4) ---\n", guestHTTPPort)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:"+hostForwardPort)
 	if err != nil {
-		fatal("Host-Listener: %v", err)
+		fatal("host listener: %v", err)
 	}
 	defer ln.Close()
 	go func() {
@@ -136,8 +137,8 @@ func host() {
 			if err != nil {
 				return
 			}
-			// PoC: eine Verbindung gleichzeitig; produktiv würde hier
-			// muxado je Verbindung einen Stream öffnen.
+			// PoC: one connection at a time; production code would open a
+			// muxado stream per connection instead.
 			go pipeThrough(tun, client)
 		}
 	}()
@@ -146,33 +147,33 @@ func host() {
 	fmt.Printf("[host] GET %s ...\n", url)
 	resp, err := http.Get(url) //nolint:noctx — PoC
 	if err != nil {
-		fatal("HTTP durch den Tunnel fehlgeschlagen: %v", err)
+		fatal("HTTP through the tunnel failed: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	fmt.Printf("[host] HTTP %d, Body: %q\n", resp.StatusCode, trimNL(string(body)))
+	fmt.Printf("[host] HTTP %d, body: %q\n", resp.StatusCode, trimNL(string(body)))
 	if resp.StatusCode == 200 && len(body) > 0 {
-		fmt.Println("✓ Der innere Sandbox-Socket ist von außen erreicht:")
-		fmt.Printf("  Host :%s  --FD4-->  Sandbox 127.0.0.1:%s (HTTP)\n",
+		fmt.Println("✓ The inner sandbox socket was reached from outside:")
+		fmt.Printf("  host :%s  --FD4-->  sandbox 127.0.0.1:%s (HTTP)\n",
 			hostForwardPort, guestHTTPPort)
 	}
 
-	// ---- Negativnachweis: kein externes Netz in der Sandbox ----
-	fmt.Println("\n--- Negativnachweis: externes Netz der Sandbox ---")
+	// ---- Negative proof: no external network in the sandbox ----
+	fmt.Println("\n--- Negative proof: external network of the sandbox ---")
 	if _, err := fmt.Fprintln(echo, "PROBE_NET"); err != nil {
-		fatal("senden fehlgeschlagen: %v", err)
+		fatal("send failed: %v", err)
 	}
 	result, err := reader.ReadString('\n')
 	if err != nil {
-		fatal("keine Antwort: %v", err)
+		fatal("no answer: %v", err)
 	}
-	fmt.Printf("[host] Gast berichtet: %s", result)
+	fmt.Printf("[host] guest reports: %s", result)
 
-	fmt.Println("\n=== PoC bestanden ===")
+	fmt.Println("\n=== PoC passed ===")
 }
 
-// pipeThrough verbindet einen Host-TCP-Client 1:1 mit dem Tunnel-FD;
-// der Gast dialt seinerseits das Ziel auf seinem Loopback.
+// pipeThrough connects a host TCP client 1:1 to the tunnel FD; the guest
+// dials the target on its own loopback.
 func pipeThrough(tun io.ReadWriteCloser, client net.Conn) {
 	defer client.Close()
 	done := make(chan struct{}, 2)
@@ -188,12 +189,12 @@ func guest() {
 	tunConn := fileConn(4, "tunnel")
 
 	uid := os.Getuid()
-	fmt.Printf("[guest] laufe in der Sandbox (uid=%d). Starte Services ...\n", uid)
+	fmt.Printf("[guest] running in the sandbox (uid=%d). Starting services ...\n", uid)
 
-	// HTTP-Server auf dem (isolierten) Sandbox-Loopback
+	// HTTP server on the (isolated) sandbox loopback
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, "Hallo vom HTTP-Server INNERHALB der Sandbox (pid %d)\n", os.Getpid())
+		fmt.Fprintf(w, "Hello from the HTTP server INSIDE the sandbox (pid %d)\n", os.Getpid())
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:"+guestHTTPPort)
 	if err != nil {
@@ -201,7 +202,7 @@ func guest() {
 	}
 	go func() { _ = http.Serve(ln, mux) }()
 
-	// Echo-Server über FD 3 + Ready-Signal an den Host
+	// Echo server over FD 3 + readiness signal to the host
 	go func() {
 		r := bufio.NewReader(echoConn)
 		if _, err := fmt.Fprint(echoConn, guestReadyMarker); err != nil {
@@ -214,23 +215,23 @@ func guest() {
 			}
 			switch trimNL(line) {
 			case "PROBE_NET":
-				// Negativprobe: externes Netz muss blockiert sein
+				// Negative probe: external network must be blocked
 				conn, derr := net.DialTimeout("tcp", "1.1.1.1:80", 2*time.Second)
 				if derr != nil {
 					fmt.Fprintf(echoConn,
-						"Dial 1.1.1.1:80 blockiert ✓ (%v) — Isolation aktiv\n", derr)
+						"dial 1.1.1.1:80 blocked ✓ (%v) — isolation active\n", derr)
 				} else {
 					conn.Close()
-					fmt.Fprintln(echoConn, "ACHTUNG: Dial nach draußen ERFOLGREICH — Isolation kompromittiert!")
+					fmt.Fprintln(echoConn, "WARNING: outbound dial SUCCEEDED — isolation compromised!")
 				}
 			default:
-				fmt.Fprintf(echoConn, "echo: %s", line) // 1:1 zurück
+				fmt.Fprintf(echoConn, "echo: %s", line) // 1:1 back
 			}
 		}
 	}()
 
-	// Tunnel-Server über FD 4: dialt das Ziel auf dem eigenen Loopback.
-	// PoC: sequenziell, eine Verbindung nach der anderen.
+	// Tunnel server over FD 4: dials the target on its own loopback.
+	// PoC: sequential, one connection at a time.
 	for {
 		c, err := net.Dial("tcp", "127.0.0.1:"+guestHTTPPort)
 		if err != nil {
@@ -246,7 +247,7 @@ func guest() {
 
 // -------------------------------------------------------------- HELPERS ---
 
-// mustSocketpair erzeugt ein AF_UNIX-SOCK_STREAM-Paar (das pwpeer-Muster).
+// mustSocketpair creates an AF_UNIX SOCK_STREAM pair (the pwpeer pattern).
 func mustSocketpair(name string) [2]*os.File {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
@@ -260,7 +261,7 @@ func mustSocketpair(name string) [2]*os.File {
 func fileConn(fd int, name string) net.Conn {
 	f := os.NewFile(uintptr(fd), name)
 	if f == nil {
-		guestFatal(fmt.Errorf("FD %d (%s) nicht vorhanden", fd, name))
+		guestFatal(fmt.Errorf("FD %d (%s) not present", fd, name))
 	}
 	c, err := net.FileConn(f)
 	if err != nil {

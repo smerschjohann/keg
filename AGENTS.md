@@ -103,7 +103,15 @@ Stdlib zuerst. Das Budget steht in `IMPLEMENTATION_PLAN.md` §1 und ist
   abgehakt.
 * Keine Misch-Commits (Feature + Refactor + Doku).
 
-## 7. Definition of Done (je Task)
+## 7. Sprache
+
+* **Code-Artefakte sind englisch:** Kommentare, Identifier, CLI-Usage-Strings,
+  Fehlermeldungen und Commit-Messages auf Englisch (`misspell` prüft das).
+* Projekt-Dokumentation (`CONCEPT.md`, `THREAT_MODEL.md`,
+  `IMPLEMENTATION_PLAN.md`) bleibt deutsch; neue technische Docs dürfen auch
+  englisch sein — Konsistenz innerhalb eines Dokuments ist Pflicht.
+
+## 8. Definition of Done (je Task)
 
 1. Test zuerst geschrieben, rot gesehen, dann grün (`-race`).
 2. `make lint test` warnungs- und fehlerfrei; `tidy` diff-frei.
