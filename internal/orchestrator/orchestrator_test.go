@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -107,9 +106,9 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 	want := make([]string, 0, 35+2*len(HostDeniedEnvVars)+8)
 	want = append(want,
 		"--unshare-all",
+		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",
-		"--preserve-fds", "3",
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
@@ -230,8 +229,8 @@ func TestBuildArgs_OverlayModes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildArgs: %v", err)
 		}
-		if !containsSequence(args, "--tmp-overlay", "/work/repo") {
-			t.Errorf("want --tmp-overlay over repo, got %v", args)
+		if !containsSequence(args, "--overlay-src", "/work/repo", "--tmp-overlay", "/work/repo") {
+			t.Errorf("want --overlay-src + --tmp-overlay over repo, got %v", args)
 		}
 		if containsSequence(args, "--bind", "/work/repo", "/work/repo") {
 			t.Errorf("plain rw bind must not coexist with overlay: %v", args)
@@ -254,8 +253,9 @@ func TestBuildArgs_OverlayModes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildArgs: %v", err)
 		}
-		if !containsSequence(args, "--overlay", rw+":"+work+":/work/repo") {
-			t.Errorf("want persistent overlay args, got %v", args)
+		if !containsSequence(args, "--overlay-src", "/work/repo",
+			"--overlay", rw, work, "/work/repo") {
+			t.Errorf("want --overlay-src lower + --overlay RWSRC WORKDIR DEST, got %v", args)
 		}
 	})
 }
@@ -317,15 +317,13 @@ func TestBuildArgs_DeterministicAcrossRuns(t *testing.T) {
 	}
 }
 
-// TestFDPlan_PreserveFdsInArgs pins the FD inheritance contract:
-// bwrap must pass fds 3..5 (proxy/DNS/runner) into the sandbox.
-func TestFDPlan_PreserveFdsInArgs(t *testing.T) {
-	args, err := BuildArgs(basePlan())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !containsPair(args, "--preserve-fds", strconv.Itoa(FDPreserved)) {
-		t.Errorf("args must contain --preserve-fds %d, got %v", FDPreserved, args)
+// TestFDPlan_ExtraFileCount pins the FD inheritance contract: exactly the
+// three channel FDs are handed to bwrap via ExtraFiles (fds 3..5 inside
+// the sandbox; CONCEPT.md §9).
+func TestFDPlan_ExtraFileCount(t *testing.T) {
+	if FDPreserved != 3 || FDProxy != 3 || FDDNS != 4 || FDRunner != 5 {
+		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d preserved=%d",
+			FDProxy, FDDNS, FDRunner, FDPreserved)
 	}
 }
 

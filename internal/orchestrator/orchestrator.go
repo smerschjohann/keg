@@ -7,20 +7,20 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/smerschjohann/keg/internal/config"
 )
 
-// FD plan — single source of truth for inherited file descriptors inside
-// the sandbox (CONCEPT.md §9).
+// FDProxy/FDDNS/FDRunner name the guest-side descriptors. bwrap (>= 0.11)
+// passes cmd.ExtraFiles through verbatim starting at fd 3 — there is no
+// --preserve-fds flag to request; inheritance is verified by
+// TestSandboxFDInheritance (integration).
 const (
 	FDProxy  = 3 // Kanal A: egress proxy
 	FDDNS    = 4 // Kanal B: DNS
 	FDRunner = 5 // Kanal C: delegation runner
-	// FDPreserved is the number of extra FDs bwrap must preserve (fds
-	// 3..2+FDPreserved stay open across exec).
+	// FDPreserved counts the extra FDs handed to bwrap via ExtraFiles.
 	FDPreserved = 3
 )
 
@@ -128,11 +128,11 @@ func BuildArgs(p Plan) ([]string, error) {
 	args := make([]string, 0, 64+len(p.BwrapArgs))
 	args = append(args,
 		"--unshare-all",
+		// --disable-userns needs an explicit --unshare-user even though
+		// --unshare-all implies it (bwrap 0.11 requirement).
+		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",
-		// Keep the channel FDs (3..2+FDPreserved) open across exec
-		// (CONCEPT.md §9 FD map).
-		"--preserve-fds", strconv.Itoa(FDPreserved),
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
@@ -152,9 +152,17 @@ func BuildArgs(p Plan) ([]string, error) {
 	// Repository write mode.
 	switch p.Overlay {
 	case OverlayEphemeral:
-		args = append(args, "--tmp-overlay", p.RepoRoot)
+		// Writes land in an invisible tmpfs upper layer; the host repo
+		// stays untouched (verified: bwrap 0.11 needs the lower dir as
+		// --overlay-src).
+		args = append(args, "--overlay-src", p.RepoRoot, "--tmp-overlay", p.RepoRoot)
 	case OverlayDisk:
-		args = append(args, "--overlay", p.DiskLayerRW+":"+p.DiskLayerWork+":"+p.RepoRoot)
+		// Persistent layer: writes go to the host-side RW dir. The lower
+		// dir comes from --overlay-src; RW/WORK dirs must be on real disk
+		// (ext4, e.g. /var/lib/containers/...) — overlayfs rejects upper
+		// dirs on tmpfs inside user namespaces (see run-sandbox.sh).
+		args = append(args, "--overlay-src", p.RepoRoot,
+			"--overlay", p.DiskLayerRW, p.DiskLayerWork, p.RepoRoot)
 	default:
 		args = append(args, "--bind", p.RepoRoot, p.RepoRoot)
 	}
