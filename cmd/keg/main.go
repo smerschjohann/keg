@@ -11,10 +11,28 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func main() {
-	cmd := &cli.Command{
+// NewCommand builds the keg root command. It is factored out so tests
+// can drive the CLI in-process (smoke tests, help-text assertions).
+func NewCommand() *cli.Command {
+	return &cli.Command{
 		Name:  "keg",
 		Usage: "isolated development sandbox with zero-trust egress",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "config",
+				Aliases: []string{"c"},
+				Usage:   "path to the repo config (default: <repo>/.keg.yaml)",
+			},
+			&cli.StringFlag{
+				Name:  "user-config",
+				Usage: "path to the user config (default: $XDG_CONFIG_HOME/keg/config.yaml)",
+			},
+			&cli.BoolFlag{
+				Name:    "verbose",
+				Aliases: []string{"v"},
+				Usage:   "enable verbose logging",
+			},
+		},
 		Commands: []*cli.Command{
 			{
 				Name:    "run",
@@ -42,6 +60,14 @@ func main() {
 				},
 			},
 			{
+				Name:  "clean-cache",
+				Usage: "delete persistent cache overlay layers",
+				Action: func(_ context.Context, _ *cli.Command) error {
+					fmt.Println("clean-cache: not implemented yet (WP-M6)")
+					return nil
+				},
+			},
+			{
 				Name:  "serve",
 				Usage: "start the remote-control daemon (unix socket/TCP)",
 				Action: func(_ context.Context, _ *cli.Command) error {
@@ -51,7 +77,10 @@ func main() {
 			},
 		},
 	}
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
+}
+
+func main() {
+	if err := NewCommand().Run(context.Background(), os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
