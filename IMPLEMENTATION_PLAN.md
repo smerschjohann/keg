@@ -211,6 +211,17 @@ Diese Punkte haben den Originalplan korrigiert bzw. präzisiert:
    Fensters endet, wird erkannt und sein Ergebnis via gepuffertem Kanal
    an `Wait()` zurückgegeben (kein Deadlock, kein Missdeutung als
    Setup-Fehler).
+8. **Fremde FDs:** bwrap vererbt unbekannte Deskriptoren absichtlich an
+   das Kind (bubblewrap.c: „Any other fds will be passed on to the child“);
+   `close_extra_fds` läuft nur im Monitor-/PID-1-Pfad. keg scrubbt
+   deshalb selbst: vor dem Start bekommt jeder Deskriptor außer stdio,
+   den Kanal-Enden und `Plan.KeepFDs` das Flag `FD_CLOEXEC`
+   (`ScrubForeignFDs`, THREAT_MODEL §5.1), und der Guest-Entrypoint
+   schließt zusätzlich alles außer 0–5 (`CloseAllFDsExcept`). Der
+   Integrationstest `TestInvariant_OnlyPlannedFDsInherit` akzeptiert
+   ausschließlich stdio plus Kanal-Sockets (Dups derselben Inode erlaubt,
+   wie sie bwraps Setup hinterlässt) — jede Datei/Pipe/fremde Socket in
+   der Sandbox ist ein Testversagen.
 
 ---
 

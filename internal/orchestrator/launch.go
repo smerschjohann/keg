@@ -170,6 +170,23 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 		cmd.Stderr = safeStderr
 	}
 
+	// FD hygiene: bwrap passes unknown descriptors through to the child
+	// (bubblewrap.c: "Any other fds will be passed on to the child though"),
+	// so mark everything except stdio and our channel ends as close-on-exec
+	// before starting it. THREAT_MODEL §5.1 (fd-leak audit).
+	keep := map[int]bool{0: true, 1: true, 2: true}
+	for _, f := range extra {
+		keep[int(f.Fd())] = true
+	}
+	for _, fd := range p.KeepFDs {
+		keep[fd] = true
+	}
+	if err := ScrubForeignFDs(keep); err != nil {
+		closeFiles(hostEnds)
+		closeFiles(extra)
+		return nil, fmt.Errorf("scrub foreign fds: %w", err)
+	}
+
 	sb := &Sandbox{cmd: cmd, hostEnds: hostEnds}
 
 	// The parent's copies of the guest ends are redundant once the child

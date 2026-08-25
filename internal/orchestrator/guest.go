@@ -24,6 +24,15 @@ func init() {
 // (see FDProxy/FDDNS/FDRunner).
 func guestMain() {
 	_ = os.Setenv("CODE_KEG", "1") // best effort; nothing depends on failure modes
+
+	// Defense-in-depth against inherited descriptors (bwrap passes unknown
+	// fds through, and its own setup may leave duplicates of our channel
+	// sockets behind): keep only stdio and the channel ends. Runs before
+	// any network activity, so the Go netpoller holds no descriptors here.
+	if err := CloseAllFDsExcept(0, 1, 2, FDProxy, FDDNS, FDRunner); err != nil {
+		fmt.Fprintf(os.Stderr, "keg guest: fd cleanup: %v\n", err)
+	}
+
 	env := StripDeniedEnv(os.Environ(), HostDeniedEnvVars)
 
 	if len(os.Args) < 2 {

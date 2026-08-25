@@ -84,32 +84,55 @@ echo "MARKER:$SANDBOX_MARKER"
 	}
 }
 
-// TestSandboxFDInheritance verifies the planned channel FDs arrive inside
-// the sandbox as socketpair ends at fds 3/4/5 (CONCEPT.md §9). Other fds
-// beyond 0-2 may exist when the *host process* leaks descriptors — that is
-// exactly what the FD-leak audit (THREAT_MODEL §5.1, WP-M8) guards against;
-// this test only asserts our contract.
-func TestSandboxFDInheritance(t *testing.T) {
+// TestInvariant_OnlyPlannedFDsInherit verifies the complete FD contract
+// inside the sandbox: exactly fds 0-2 (stdio) plus the channel ends 3-5 as
+// socketpair sockets — nothing else. Foreign host descriptors are marked
+// close-on-exec before start (THREAT_MODEL §5.1), so any extra entry here
+// is a leak that made it through.
+func TestInvariant_OnlyPlannedFDsInherit(t *testing.T) {
 	dir := t.TempDir()
-	script := `for f in 0 1 2 3 4 5; do printf "%s=%s\n" $f "$(readlink /proc/self/fd/$f)"; done`
+	script := `for f in /proc/self/fd/*; do printf "%s=%s\n" "$(basename $f)" "$(readlink $f)"; done`
 	out, code := runInSandbox(t, dir, orchestrator.OverlayPlain, script)
 	if code != 0 {
 		t.Fatalf("sandbox exited %d:\n%s", code, out)
 	}
-	for _, fd := range []string{"0", "1", "2"} {
-		if !strings.Contains(out, fd+"=") {
-			t.Errorf("std fd %s missing:\n%s", fd, out)
+
+	fds := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && v != "" { // skip the scanner's own dirfd (empty target)
+			fds[k] = v
 		}
 	}
+
+	channelInodes := map[string]bool{} // inode -> true, from fds 3..5
+	for _, fd := range []string{"0", "1", "2"} {
+		if _, ok := fds[fd]; !ok {
+			t.Errorf("std fd %s missing:\n%s", fd, out)
+		}
+		delete(fds, fd)
+	}
 	for _, fd := range []string{"3", "4", "5"} {
-		line := strings.Split(out, fd+"=")
-		if len(line) < 2 {
+		target, ok := fds[fd]
+		if !ok {
 			t.Errorf("channel fd %s missing:\n%s", fd, out)
 			continue
 		}
-		target := strings.TrimSpace(strings.SplitN(line[1], "\n", 2)[0])
+		delete(fds, fd)
+		inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
+		channelInodes[inode] = true
 		if !strings.HasPrefix(target, "socket:[") {
-			t.Errorf("fd %s = %q, want a socket (socketpair end)\n%s", fd, target, out)
+			t.Errorf("fd %s = %q, want a socketpair end\n%s", fd, target, out)
+		}
+	}
+	// Anything left must be a duplicate of a channel socket (bwrap's own
+	// setup dups the preserved ends); any file, pipe or other socket here
+	// is a leak that escaped both the host-side CLOEXEC scrub and the
+	// guest-side close sweep.
+	for fd, target := range fds {
+		inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
+		if !strings.HasPrefix(target, "socket:[") || !channelInodes[inode] {
+			t.Errorf("foreign fd %s leaked into sandbox (%s):\n%s", fd, target, out)
 		}
 	}
 }

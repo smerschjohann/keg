@@ -75,6 +75,10 @@ type Plan struct {
 
 	// BwrapPath overrides the bubblewrap binary (tests inject a stub).
 	BwrapPath string
+	// KeepFDs lists additional descriptors (besides stdio and the channel
+	// ends) that must survive into the sandbox; everything else is marked
+	// close-on-exec before start.
+	KeepFDs []int
 	// Stdin/Stdout/Stderr wire the sandbox process (default: os.Std*).
 	Stdin  io.Reader
 	Stdout io.Writer
