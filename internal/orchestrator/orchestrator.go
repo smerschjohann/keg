@@ -138,15 +138,21 @@ func BuildArgs(p Plan) ([]string, error) {
 		"--tmpfs", "/tmp",
 	)
 
-	// Base system: read-only /usr plus merged-usr symlinks, linker and CA
-	// material for CGO builds and TLS.
+	// Base system: layout proven by the existing sandbox (run-sandbox.sh):
+	// real binds for /bin and /lib work on merged-/usr systems and avoid
+	// symlink edge cases; -try variants tolerate absent optional locations
+	// (CA stores differ across distros). /etc/passwd gives name lookups.
 	args = append(args,
 		"--ro-bind", "/usr", "/usr",
-		"--symlink", "usr/bin", "/bin",
-		"--symlink", "usr/lib", "/lib",
-		"--symlink", "usr/lib64", "/lib64",
-		"--ro-bind", "/etc/alternatives", "/etc/alternatives",
+		"--ro-bind", "/bin", "/bin",
+		"--ro-bind", "/lib", "/lib",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind", "/etc/passwd", "/etc/passwd",
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives", // linker for CGO
 		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
+		"--ro-bind-try", "/etc/pki", "/etc/pki",
+		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+		"--ro-bind-try", "/etc/crypto-policies", "/etc/crypto-policies",
 	)
 
 	// Repository write mode.
@@ -167,9 +173,12 @@ func BuildArgs(p Plan) ([]string, error) {
 		args = append(args, "--bind", p.RepoRoot, p.RepoRoot)
 	}
 
-	// Sandbox home as writable tmpfs.
+	// Sandbox home as writable tmpfs, then start inside the repository.
 	if p.SandboxHome != "" {
-		args = append(args, "--tmpfs", p.SandboxHome)
+		args = append(args,
+			"--tmpfs", p.SandboxHome,
+			"--chdir", p.RepoRoot,
+		)
 	}
 
 	// Custom mounts, deterministically ordered by destination.
@@ -212,7 +221,12 @@ func BuildArgs(p Plan) ([]string, error) {
 	args = append(args,
 		"--setenv", "HOME", p.SandboxHome,
 		"--setenv", "TMPDIR", "/tmp",
+		"--setenv", "SHELL", "/bin/bash",
 	)
+	// PATH mirrors the proven sandbox: repo-local tools first, then the
+	// sandbox home, then the system (all absolute so they resolve inside).
+	args = append(args, "--setenv", "PATH",
+		p.RepoRoot+"/.cache/bin:"+p.SandboxHome+"/.local/bin:/usr/local/bin:/usr/bin:/bin")
 
 	// Raw extra args last: they can add to, not reliably retract, derived
 	// arguments (weak ones gated above).
