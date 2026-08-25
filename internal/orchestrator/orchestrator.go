@@ -133,29 +133,29 @@ func BuildArgs(p Plan) ([]string, error) {
 		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",
-	)
-
-	// Read-only root bind FIRST (it would otherwise shadow the fresh
-	// proc/dev mounts below): required for unprivileged overlayfs to
-	// actually persist upperdir writes (verified empirically — without it
-	// the kernel discards overlay writes at namespace teardown). Same
-	// principle as the legacy jail prototype: host root as read-only lower
-	// layer. Everything outside the declared write targets stays read-only,
-	// matching CONCEPT.md and THREAT_MODEL §6.
-	args = append(args, "--ro-bind", "/", "/")
-
-	args = append(args,
 		"--proc", "/proc",
 		"--dev", "/dev",
+		// Fresh tmpfs over host /tmp: workload temp data never leaks.
+		"--tmpfs", "/tmp",
 	)
 
-	// Fresh tmpfs over host /tmp and /home: workload temp data and the
-	// caller's home directory never leak into (or out of) the sandbox.
-	// Mounted after the root bind so later mounts can create paths inside
-	// these writable layers.
+	// Base system layout (proven by run-sandbox.sh): real binds for /bin
+	// and /lib work on merged-/usr systems and avoid symlink edge cases;
+	// -try variants tolerate absent optional locations. /lib64 matters:
+	// without it the dynamic loader is missing and every binary fails
+	// with a misleading "No such file or directory". Everything NOT bound
+	// here does not exist inside the sandbox (CONCEPT.md visibility model).
 	args = append(args,
-		"--tmpfs", "/tmp",
-		"--tmpfs", "/home",
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind", "/bin", "/bin",
+		"--ro-bind", "/lib", "/lib",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind", "/etc/passwd", "/etc/passwd",
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives", // linker for CGO
+		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
+		"--ro-bind-try", "/etc/pki", "/etc/pki",
+		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+		"--ro-bind-try", "/etc/crypto-policies", "/etc/crypto-policies",
 	)
 
 	// Repository write mode.

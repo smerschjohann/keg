@@ -103,25 +103,30 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 	}
 	// Expected layout includes env hygiene: every host-denied var must be
 	// stripped via --unsetenv before HOME/TMPDIR are set.
-	want := make([]string, 0, 20+2*len(HostDeniedEnvVars)+8)
+	want := make([]string, 0, 36+2*len(HostDeniedEnvVars)+8)
 	want = append(want,
 		"--unshare-all",
 		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",
-		// Read-only root bind first (before proc/dev so it cannot shadow
-		// them): required for unprivileged overlayfs to persist upperdir
-		// writes (same principle as the legacy jail: host root as read-only
-		// lower layer). Everything outside declared write targets stays
-		// read-only (CONCEPT.md "Rest read-only oder nicht vorhanden",
-		// THREAT_MODEL §6).
-		"--ro-bind", "/", "/",
 		"--proc", "/proc",
 		"--dev", "/dev",
-		// Fresh tmpfs over host /tmp and /home before anything lands there;
-		// this hides the caller's real home directory entirely.
+		// Fresh tmpfs over host /tmp: workload temp data never leaks.
 		"--tmpfs", "/tmp",
-		"--tmpfs", "/home",
+		// Base system (proven by run-sandbox.sh): real binds for /bin and
+		// /lib (merged-/usr safe), -try for optional locations. /lib64 is
+		// required for the dynamic loader. Everything NOT bound here does
+		// not exist inside the sandbox (CONCEPT.md visibility model).
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind", "/bin", "/bin",
+		"--ro-bind", "/lib", "/lib",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind", "/etc/passwd", "/etc/passwd",
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
+		"--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs",
+		"--ro-bind-try", "/etc/pki", "/etc/pki",
+		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+		"--ro-bind-try", "/etc/crypto-policies", "/etc/crypto-policies",
 		"--bind", "/work/repo", "/work/repo",
 		"--tmpfs", "/home/sandbox",
 		"--chdir", "/work/repo",
@@ -357,4 +362,41 @@ outer:
 		return true
 	}
 	return false
+}
+
+func TestIsOverlayBusy(t *testing.T) {
+	tests := []struct {
+		name string
+		res  waitResult
+		want bool
+	}{
+		{
+			name: "overlay mount busy",
+			res: waitResult{code: 1, stderr: "bwrap: Can't make overlay mount on /newroot/x with options " +
+				"upperdir=...,workdir=...,lowerdir=...,userxattr: Device or resource busy"},
+			want: true,
+		},
+		{
+			name: "setup failure without busy (e.g. missing bind source)",
+			res:  waitResult{code: 1, stderr: "bwrap: Can't find source path /does/not/exist"},
+			want: false,
+		},
+		{
+			name: "busy but different cause",
+			res:  waitResult{code: 1, stderr: "bwrap: something else: Device or resource busy"},
+			want: false,
+		},
+		{
+			name: "successful run",
+			res:  waitResult{code: 0},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isOverlayBusy(tt.res); got != tt.want {
+				t.Errorf("isOverlayBusy(%+v) = %v, want %v", tt.res, got, tt.want)
+			}
+		})
+	}
 }

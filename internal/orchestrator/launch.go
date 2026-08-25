@@ -1,11 +1,16 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
+	"time"
 )
 
 // Sandbox is a running sandbox instance. It owns the host ends of the
@@ -13,14 +18,23 @@ import (
 type Sandbox struct {
 	cmd *exec.Cmd
 
+	waitCh chan waitResult
+
 	// hostEnds are the orchestrator-owned socketpair ends; the guest holds
 	// the peers at fds FDProxy/FDDNS/FDRunner. Closed by Close().
 	hostEnds []*os.File
 }
 
+type waitResult struct {
+	code   int
+	err    error
+	stderr string // captured only when an overlay mount is involved
+}
+
 // Launch starts the sandbox described by p and returns once bwrap has
-// started successfully. Cancelling ctx kills the sandbox process
-// (CONCEPT.md §8.2: context cancellation tears everything down).
+// started successfully AND survived its setup phase: bubblewrap performs
+// all mounts before executing the command, so early exits surface mount
+// errors here rather than in Wait.
 func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
 	bin := p.BwrapPath
 	if bin == "" {
@@ -36,6 +50,75 @@ func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
 		return nil, fmt.Errorf("build bwrap args: %w", err)
 	}
 
+	const (
+		maxAttempts   = 10
+		retryInterval = 500 * time.Millisecond
+		stableWindow  = 750 * time.Millisecond // mounts happen before command exec
+	)
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		sb, startErr := start(ctx, bin, args, p)
+		if startErr != nil {
+			closeFiles(sb.hostEnds)
+			return nil, startErr // pre-start failures are not retryable races
+		}
+		{
+			// Give bwrap time to reach the command execution: mount
+			// failures kill it within milliseconds of Start(), BEFORE the
+			// command runs. A command that finishes inside the stability
+			// window exits 0 — also fine, just early.
+			select {
+			case res := <-sb.waitCh:
+				closeFiles(sb.hostEnds)
+				if isOverlayBusy(res) {
+					lastErr = fmt.Errorf("bwrap overlay mount busy: %s", res.stderr)
+					break // transient race: retry with a fresh attempt
+				}
+				sb.waitCh <- res // not ours to judge: hand the real result back
+				return sb, nil
+			case <-time.After(stableWindow):
+				return sb, nil // alive past setup: hand over to caller
+			case <-ctx.Done():
+				_ = sb.cmd.Process.Kill()
+				closeFiles(sb.hostEnds)
+				return nil, ctx.Err()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryInterval):
+		}
+	}
+	return nil, fmt.Errorf("sandbox did not become stable after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// isOverlayBusy classifies an early-exit result as the transient overlay
+// workdir race. Detection relies on this exact stderr pattern because bwrap
+// uses plain exit code 1 for all setup failures — a workload exiting 1
+// quickly would be indistinguishable by code alone.
+func isOverlayBusy(res waitResult) bool {
+	return strings.Contains(res.stderr, "Can't make overlay mount") &&
+		strings.Contains(res.stderr, "Device or resource busy")
+}
+
+// lockedWriter serializes writes across exec's stdout/stderr copy
+// goroutines.
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// start performs one bwrap launch attempt. On success the process is being
+// monitored; its eventual result is delivered on sb.waitCh exactly once.
+func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, error) {
 	// Channel socketpairs; guest ends become fds 3/4/5 inside the sandbox.
 	var hostEnds []*os.File
 	var extra []*os.File
@@ -63,40 +146,65 @@ func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
 		stderr = os.Stderr
 	}
 
+	// exec.Cmd copies stdout and stderr from dedicated goroutines; when
+	// callers pass the same stream for both (common in tests), writes must
+	// be serialized to stay race-free.
+	var streamMu sync.Mutex
+	safeStdout := lockedWriter{w: stdout, mu: &streamMu}
+	safeStderr := lockedWriter{w: stderr, mu: &streamMu}
+
+	// ctx cancellation kills the process (CONCEPT.md §8.2); the stable-
+	// window check in Launch additionally catches early setup deaths.
 	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 -- args are built by BuildArgs from validated config
 	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	cmd.Stdout = safeStdout
 	cmd.ExtraFiles = extra
 	cmd.Env = os.Environ() // sandbox env hygiene happens via bwrap args + guest strip
+
+	// Capture stderr to detect the overlay EBUSY race while still passing
+	// it through to the caller's stream.
+	var errBuf bytes.Buffer
+	if p.Overlay != OverlayPlain {
+		cmd.Stderr = io.MultiWriter(safeStderr, &errBuf)
+	} else {
+		cmd.Stderr = safeStderr
+	}
 
 	sb := &Sandbox{cmd: cmd, hostEnds: hostEnds}
 
 	// The parent's copies of the guest ends are redundant once the child
 	// holds them; drop ours so EOF propagates correctly on exit.
-	defer func() {
-		closeFiles(extra)
-	}()
+	defer closeFiles(extra)
 
 	if err := cmd.Start(); err != nil {
 		closeFiles(hostEnds)
 		return nil, fmt.Errorf("start bwrap: %w", err)
 	}
+
+	sb.waitCh = make(chan waitResult, 1)
+	go func() {
+		err := cmd.Wait()
+		sb.Close() // host ends die with the session
+		res := waitResult{code: 0}
+		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				// Normal exit (incl. signal deaths: code < 0).
+				res.code = ee.ExitCode()
+			} else {
+				res.err = err
+			}
+		}
+		res.stderr = errBuf.String()
+		sb.waitCh <- res
+	}()
 	return sb, nil
 }
 
 // Wait blocks until the sandbox command exits and returns its exit code.
 func (s *Sandbox) Wait() (int, error) {
-	err := s.cmd.Wait()
-	s.Close() // host ends die with the session
-	if err == nil {
-		return 0, nil
-	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode(), nil
-	}
-	return -1, fmt.Errorf("wait sandbox: %w", err)
+	res := <-s.waitCh
+	return res.code, res.err
 }
 
 // Pid returns the bwrap process id (valid after Launch).

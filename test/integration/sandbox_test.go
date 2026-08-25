@@ -5,10 +5,12 @@ package integration
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
 )
@@ -137,7 +139,9 @@ func TestSandboxDiskOverlay(t *testing.T) {
 	if _, err := os.Stat(storageBase); err != nil {
 		t.Skipf("no persistent disk storage base at %s: %v", storageBase, err)
 	}
-	layerName := "keg-itest-" + strings.TrimPrefix(filepath.Base(t.TempDir()), "Test")
+	// Unique per run: a leftover kernel reference (detached overlay mount
+	// from an earlier run on the same path) surfaces as EBUSY otherwise.
+	layerName := fmt.Sprintf("keg-itest-%d", time.Now().UnixNano())
 	defer os.RemoveAll(filepath.Join(storageBase, layerName))
 
 	dir := t.TempDir()
@@ -182,9 +186,11 @@ func TestSandboxDiskOverlay(t *testing.T) {
 		t.Errorf("disk-overlay write must stay in the layer, not the host repo")
 	}
 
-	// A fresh sandbox on the same layer sees the previous run's data.
+	// A fresh sandbox on the same layer sees the previous run's data. The
+	// output may contain a retry preamble from a transient EBUSY attempt,
+	// hence substring matching.
 	got := runLayered(`cat layer.txt`)
-	if strings.TrimSpace(got) != "persisted" {
+	if !strings.Contains(got, "persisted") {
 		t.Errorf("persistent layer lost data across exits: got %q", got)
 	}
 }
