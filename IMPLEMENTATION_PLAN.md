@@ -3,6 +3,11 @@
 > Operative Ausarbeitung der Meilensteine M1–M9 aus `CONCEPT.md`.
 > Sicherheitsinvarianten: `THREAT_MODEL.md` §8 (jede ist regressionsgetestet).
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
+>
+> **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
+> Stand: **Phase 0 + WP-M1 vollständig erledigt**, Details in den
+> jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
+> *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
 ---
 
@@ -63,25 +68,35 @@ muss diff-frei sein.
 
 ## 2. Phase 0 — Fundament (Vorbereitung von M1)
 
+**Status:** ✅ erledigt.
+
 **Aufgaben**
 
-* [ ] Repo-Skelett nach §1 anlegen, `go.mod` (`go 1.27+`).
-* [ ] `.golangci.yml` einchecken; `make lint`, `make test`, `make test-integration`,
-      `make build` (Makefile).
-* [ ] CI-Pipeline (GitHub Actions): lint → unit (`-race`) → integration
-      (nur wenn `bwrap` vorhanden, sonst SKIP-Meldung).
-* [ ] `cmd/keg` mit urfave/cli: Subcommands `run` (Default), `list`,
+* [x] Repo-Skelett nach §1 anlegen, `go.mod` (`go 1.25+`; 1.27 existiert
+      noch nicht stabil — bewusste Anpassung).
+* [x] `.golangci.yml` einchecken; `make lint`, `make test`, `make integration`,
+      `make build` (Makefile; Target heißt `integration`, nicht
+      `test-integration`).
+* [x] CI-Pipeline (`.github/workflows/ci.yml`): lint → unit (`-race`) →
+      integration mit installiertem bubblewrap; Skip-Logik liegt in den Tests.
+* [x] `cmd/keg` mit urfave/cli: Subcommands `run` (Default), `list`,
       `clean`, `clean-cache`, `serve` (Stub). Globale Flags `--config`,
-      `--user-config`, `--verbose`.
+      `--user-config`, `--verbose`; zusätzlich `run`-Flags `--repo`,
+      `--ephemeral`, `--disk-overlay NAME`.
 
-**Tests:** CLI-Smoke-Tests (`cli.NewApp().RunAsSubcommand`-Muster),
-`make`-Targets laufen lokal grün.
+**Tests:** CLI-Smoke-Tests (In-Process über exportierte `NewCommand()`-
+Fabrik), `make`-Targets laufen lokal grün.
 
-**DoD:** `make lint test` grün auf leerem Kern; CI grün.
+**DoD:** ✅ `make lint test` grün; CI-Workflow eingecheckt (Remote-Lauf
+folgt mit erstem Push auf GitHub).
 
 ---
 
 ## 3. WP-M1 — Skeleton: Isolierte Shell
+
+**Status:** ✅ erledigt (inkl. Integrationstests gegen echtes bwrap 0.11).
+Siehe *Umsetzungsnotizen* am Ende des Abschnitts — dort liegen mehrere
+wichtige, empirisch verifizierte Abweichungen vom Originalplan.
 
 ### 3.1 `internal/config`: Laden & Validieren
 
@@ -100,7 +115,16 @@ muss diff-frei sein.
   gewinnt, kein Treffer ⇒ nur Global;
 * `~`/`$VAR`-Expansion inkl. Fehlerfall.
 
-**DoD:** Coverage `internal/config` ≥ 90 %.
+**DoD:** Coverage `internal/config` ≥ 90 % (erreicht für die umgesetzten
+Pfade; Template-Auflösung folgt in WP-M4 und erweitert die Suite).
+
+**Umgesetzt:** Typen spiegeln CONCEPT.md §5; `ParseRepo`/`ParseUser`
+(strict, unbekannte Felder = Fehler mit Feldpfad); `MergeUsers` (Skalar
+ersetzen / Listen unionieren / Maps keyweise); `MatchRepo` (exakter
+realpath schlägt Glob, längster wörtlicher Präfix gewinnt; Patterns
+werden vor dem Matching expandiert); `MergeVars` inkl.
+`KEG_VAR_*`-Env-Injektion; `ExpandPath` für `~`/`$VAR` mit hartem
+Fehler bei unset Variablen.
 
 ### 3.2 `internal/orchestrator`: Arg-Builder (Kernstück)
 
@@ -118,6 +142,13 @@ muss diff-frei sein.
 * schwache Flags ohne Freigabe ⇒ Fehlermeldung enthält exakt das Flag;
 * Reihenfolge-Stabilität (deterministische Sortierung der Mounts).
 
+**Umgesetzt:** Alles oben; Goldens inline im Table-Test statt
+`testdata/`-Snapshots (Übersichtlichkeit; bei Bedarf später externalisieren).
+Abweichend vom ersten Entwurf: echte `/bin`/`/lib`-ro-Binds statt
+Symlinks (merged-/usr-sicher, Layout aus dem Bestand), `-try`-Binds für
+optionale CA-Pfade, `/etc/passwd`, `--chdir` ins Repo sowie gesetzte
+`PATH`/`SHELL`.
+
 ### 3.3 Launch & Guest-Entrypoint
 
 * `syscall.Socketpair`-Helper (mit `/proc/self/fd`-Audit im Debug-Modus:
@@ -126,17 +157,66 @@ muss diff-frei sein.
 * Env-Hygiene: Host-Proxy-/Cloud-Variablen werden nie vererbt (Liste aus
   CONCEPT.md), nur gesetzte Werte.
 
-**Integrationstests** (Build-Tag `integration`, Skip ohne bwrap)
+**Integrationstests** (Build-Tag `integration`, Skip ohne bwrap — sichtbar
+mit Grund, nie stumm)
 
-* `TestSandboxShellIsolated:` Shell in Sandbox, `ip link` zeigt nur `lo`,
-  `$HOME` ist tmpfs, Repo rw, `/usr/bin` readonly (write schlägt fehl);
-* FD-Erbgut: genau FDs 0–3(+n) offen (via `/proc/self/fd` gezählt).
+* [x] `TestSandboxShellIsolated:` Shell in Sandbox, `ip link` zeigt nur
+      `lo`, `$HOME` ist tmpfs und beschreibbar, Repo rw, `/usr` readonly
+      (write schlägt fehl), `env.set` wird angewendet;
+* [x] `TestSandboxFDInheritance:` fds 0–2 Standard + 3–5 als
+      Socketpair-Enden (`readlink /proc/self/fd/N` → `socket:[...]`);
+* [x] `TestSandboxEphemeralOverlay:` Schreiben in der Sandbox hinterlässt
+      nichts im Host-Repo;
+* [x] `TestSandboxDiskOverlay:` Zwei Läufe auf demselben Layer — Lauf 1
+      schreibt, Lauf 2 liest zurück; Host-Repo bleibt sauber;
+* [x] `TestSandboxHostEnvStripped:` Host-Credentials erreichen den
+      Sandbox-Prozess nicht.
 
-**DoD:** `keg run -- bash` liefert isolierte Shell; Integrationstest grün.
+**DoD:** ✅ `keg run -- <cmd>` liefert isolierte Shell; alle
+Integrationstests grün (Suite mehrfach hintereinander stabil).
+
+#### Umsetzungsnotizen M1 (empirisch gegen bwrap 0.11 verifiziert)
+
+Diese Punkte haben den Originalplan korrigiert bzw. präzisiert:
+
+1. **FD-Erbgut:** bwrap hat **kein** `--preserve-fds`. `cmd.ExtraFiles`
+   werden unverändert ab fd 3 durchgereicht; der Integrationstest pinnt
+   die Socketpair-Enden an fd 3/4/5 (CONCEPT §9).
+2. **UserNS:** `--disable-userns` verlangt ein explizites `--unshare-user`,
+   obwohl `--unshare-all` es impliziert.
+3. **Overlay-Syntax:** `--tmp-overlay`/`--overlay` brauchen mindestens
+   einen vorangestellten `--overlay-src`; persistente Layer nutzen
+   `--overlay-src LOWER --overlay RW WORK DEST` wie im Bestand. Upper-/Work-Dirs
+   gehören auf echte Disk (`/var/lib/containers/storage/sandbox`, ext4) —
+   tmpfs-Uppers werden im User-Mode verweigert.
+4. **Persistenz:** Writes sind unmittelbar nach dem Sandbox-Exit dauerhaft
+   im Upperdir (gemessen, kein verzögertes Flushen). Sichtbarkeitsmodell
+   bleibt „nicht gebunden = nicht vorhanden“; ein zwischenzeitlich
+   erprobtes `--ro-bind / /` wurde wieder entfernt (zu weitreichende
+   ro-Sicht auf den Host).
+5. **EBUSY bei Layer-Wiedernutzung:** OverlayFS schützt Upper-/Work-Dirs
+   exklusiv pro Superblock (dmesg: „upperdir is in-use as upperdir/workdir
+   of another mount“). Remounts direkt nach einem Exit schlagen deshalb
+   transient fehl. `Launch()` überwacht daher die Setup-Phase: stirbt
+   bwrap vor Command-Start mit der stderr-Signatur „Can't make overlay
+   mount“ + „Device or resource busy“, wird bis zu 10× im Abstand von
+   500 ms neu gestartet. Jedes andere Ergebnis (inkl. schnell
+   fehlschlagender Workloads mit Code 1) wird unverändert über `Wait()`
+   durchgereicht — Code 1 allein ist nicht unterscheidbar, nur das
+   stderr-Muster.
+6. **Env-Hygiene doppelt:** bwrap `--unsetenv` (Liste
+   `HostDeniedEnvVars`) plus zweites Strippen im Guest-Entrypoint
+   (Defense-in-Depth, je ein Invariantentest).
+7. **Früh fertig Commands:** Ein Workload, der innerhalb des Setup-
+   Fensters endet, wird erkannt und sein Ergebnis via gepuffertem Kanal
+   an `Wait()` zurückgegeben (kein Deadlock, kein Missdeutung als
+   Setup-Fehler).
 
 ---
 
 ## 4. WP-M2 — Proxy-Kanal (A)
+
+**Status:** ⬜ offen (nächster Schritt laut §13).
 
 ### 4.1 Whitelist-Matcher
 
@@ -173,6 +253,8 @@ unbekannte Domain ⇒ sichtbare 403.
 
 ## 5. WP-M3 — DNS-Kanal (B)
 
+**Status:** ⬜ offen.
+
 * Framing-Codec: `ReadFrame/WriteFrame` (2-Byte-Length-Prefix, RFC 1035 §4.2.2)
   als eigenes Paket — auch vom Runner wiederverwendbar.
 * Resolver-Logik: hosts (exakt vor Wildcard, Single-Level-Splat) → Whitelist →
@@ -193,6 +275,10 @@ UDP-Bridge-Lasttest (100 parallele Queries, keine Drops, goroutine-leak-frei).
 ---
 
 ## 6. WP-M4 — Templates, Vars, Env, Ports
+
+**Status:** ⬜ offen (Teile vorweggenommen: PortSpec-Parsing inkl.
+String-/Mapping-Formen sitzt in `internal/config`; `env.set`/`env.unset`
+wird bereits vom Arg-Builder angewendet).
 
 ### 6.1 Template-Engine (`internal/template`)
 
@@ -266,10 +352,19 @@ Commit-Messages via b64.
 
 ## 8. WP-M6 — Overlays & Layer-Management
 
-* Modi ephemeral/disk-overlay/isolated-cache-name in den Arg-Builder integrieren
-  (Goldentests erweitern); UID-kompatibles `mkdirAll` für Upper/Workdirs.
-* Management-Kommandos `--list/--clean/--clean-cache/--clean-all` mit
-  Stufenlöschung (chmod → unshare-mount → sudo, letzteres interaktiv).
+**Status:** 🔶 teilweise vorweggenommen — plain/`--ephemeral`/
+`--disk-overlay NAME` sind seit M1 funktionsfähig (Arg-Builder + CLI-Flags
++ Persistenz-Integrationstest, siehe M1-Umsetzungsnotizen). Offen:
+`isolated-cache-name`, Cache-Quellen-Erkennung, Management-Kommandos
+(`list`/`clean`/`clean-cache` sind noch Stubs) samt Stufenlöschung und
+die EBUSY-Retry-Strategie für das Layer-Lifecycle generalisieren.
+
+* [ ] Modi ephemeral/disk-overlay ~~in den Arg-Builder integrieren~~ ✅;
+      offen: isolated-cache-name (Goldentests erweitern); UID-kompatibles
+      `mkdirAll` für Upper/Workdirs (aktuell `MkdirAll` mit 0o750 unter
+      `paths.storage_base`).
+* [ ] Management-Kommandos `list/clean/clean-cache/clean-all` mit
+      Stufenlöschung (chmod → unshare-mount → sudo, letzteres interaktiv).
 
 **Tests:** Overlay-Args in Goldens; Layer-Lifecycle-Integrationstest
 (erstellen → sichtbar → clean → weg); `--ephemeral` lässt `git status`
@@ -281,6 +376,8 @@ jungfräulich.
 
 ## 9. WP-M7 — Polish
 
+**Status:** ⬜ offen.
+
 * `log/slog`-strukturiertes Logging; Audit-Datei optional (User-Config).
 * Parallel-Instanzen (`--name`, deterministische Pfade).
 * Fehlerbild-Katalog als `docs/errors.md` (Texte = Testexpectations).
@@ -289,6 +386,8 @@ jungfräulich.
 ---
 
 ## 10. WP-M8 — Hardening
+
+**Status:** ⬜ offen.
 
 * **Secrets:** `secret_sources` (User-Config), Initial-Fetch vor Start,
   Refresher-Goroutinen mit `interval`, atomarer Swap (Temp+rename im selben
@@ -309,6 +408,8 @@ jungfräulich.
 ---
 
 ## 11. WP-M9 — Go-API & Daemon
+
+**Status:** ⬜ offen.
 
 * Refactor: Orchestrator-Kern hinter Schnittstelle; `pkg/keg`:
   `Launch(opts…)`, `(*Sandbox).Command/Output/SecretPath/Close`, Options-
@@ -331,7 +432,7 @@ jungfräulich.
 |---|---|---|
 | Unit (Standard) | alle reinen Funktionen: Matcher, Arg-Builder, Templating, Framing, Merge | neben dem Code |
 | Protokoll-Unit | Server/Sockets via `net.Pipe()`, goroutine-leak-check | neben dem Code |
-| Integration (Tag `integration`) | echte bwrap-Läufe, Offline-Workflows, Playwright-Port-Flow | `test/integration/` |
+| Integration (Tag `integration`) | echte bwrap-Läufe (Isolation, FD-Kanäle, Overlay-Persistenz, Env-Hygiene); Offline-Workflows und Playwright-Port-Flow folgen mit M2–M6 | `test/integration/` |
 | Golden | bwrap-Args, Fehlermeldungen | `testdata/` |
 
 Regeln: `-race` immer; Skip ohne bwrap mit sichtbarer Meldung (nie stumm);
@@ -353,3 +454,9 @@ Erster nutzbarer Schnitt nach **M3**: offline-fähige Go-Sandbox mit
 kontrolliertem Egress. Nach **M5** vollständig für den Bestands-Workflow
 nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
+
+**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · als nächstes **M2**.
+Ein erster nutzbarer Schnitt existiert damit bereits: isolierte Shell mit
+Overlay-Modi (`--ephemeral`, `--disk-overlay NAME`), FD-Kanal-Plumbing
+(fd 3–5 als Socketpair-Enden) und doppelter Env-Hygiene — noch ohne
+Egress (M2/M3).
