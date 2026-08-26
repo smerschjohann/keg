@@ -22,8 +22,8 @@ const DefaultDialTimeout = 10 * time.Second
 // enforces the domain whitelist on every CONNECT or plain-HTTP request.
 // Policy lives here exclusively — the guest bridge is byte-transparent.
 type Server struct {
-	// Whitelist holds exact domains and "*.suffix" patterns (see Match).
-	Whitelist []string
+	// SNIDomains holds exact domains and "*.suffix" patterns (see Match).
+	SNIDomains []string
 	// UpstreamProxy is "host:port" of a restrictive upstream HTTP proxy;
 	// empty dials targets directly.
 	UpstreamProxy string
@@ -35,6 +35,10 @@ type Server struct {
 	// Dial, if set, replaces net.DialTimeout for target connections
 	// (production leaves it nil; integration tests inject fake routing).
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// RawTargetCheck, if set, allows IP-literal CONNECT targets that fail
+	// the domain whitelist (transparent raw-TCP mode): it receives
+	// "ip:port" and decides. Domain names are never routed through it.
+	RawTargetCheck func(hostPort string) bool
 }
 
 // AuditEvent records one whitelist decision.
@@ -156,7 +160,12 @@ func decide(cfg Server, hostPort string) bool {
 	if h, _, err := net.SplitHostPort(hostPort); err == nil {
 		hostOnly = h
 	}
-	allowed := Match(hostOnly, cfg.Whitelist) == Allow
+	allowed := Match(hostOnly, cfg.SNIDomains) == Allow
+	if !allowed && cfg.RawTargetCheck != nil {
+		if ip := net.ParseIP(hostOnly); ip != nil {
+			allowed = cfg.RawTargetCheck(hostPort)
+		}
+	}
 	if cfg.Audit != nil {
 		cfg.Audit(AuditEvent{Allowed: allowed, Host: hostPort})
 	}

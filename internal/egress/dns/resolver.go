@@ -30,6 +30,10 @@ type Resolver struct {
 	Upstream string
 	// Timeout bounds the upstream exchange (default 3s).
 	Timeout time.Duration
+	// OnA, if set, is called with every successfully forwarded query name
+	// and its A answers — used by the caller to correlate IPs back to
+	// names for tcp_endpoints policy.
+	OnA func(name string, ips []net.IP)
 }
 
 // HandleQuery takes one wire-format query and returns the wire-format
@@ -60,6 +64,20 @@ func (r *Resolver) HandleQuery(query []byte) []byte {
 	resp, err := r.forward(q)
 	if err != nil {
 		return servfail(q, query)
+	}
+	if r.OnA != nil {
+		parsed := new(miek.Msg)
+		if err := parsed.Unpack(resp); err == nil {
+			var ips []net.IP
+			for _, rr := range parsed.Answer {
+				if a, ok := rr.(*miek.A); ok {
+					ips = append(ips, a.A)
+				}
+			}
+			if len(ips) > 0 {
+				r.OnA(name, ips)
+			}
+		}
 	}
 	return resp
 }

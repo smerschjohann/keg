@@ -23,6 +23,9 @@ type Sandbox struct {
 	// hostEnds are the orchestrator-owned socketpair ends; the guest holds
 	// the peers at fds FDProxy/FDDNS/FDRunner. Closed by Close().
 	hostEnds []*os.File
+
+	raw    *rawEndpoints // ip->endpoint correlation (transparent mode)
+	rawCfg rawCfg
 }
 
 type waitResult struct {
@@ -134,6 +137,13 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	// bwrap so the sandbox shares that namespace. Channel A keeps its own
 	// socketpair (fd 3); fd 4/5 stay reserved for future channels.
 	stage := &stageConfig{BwrapPath: bin, Args: args, DNS: p.EgressDNS, Transparent: p.Transparent}
+	if len(p.TCPEndpoints) > 0 {
+		var ports []int
+		for _, ep := range p.TCPEndpoints {
+			ports = append(ports, ep.Ports...)
+		}
+		stage.TransparentPorts = ports
+	}
 	unshareBin, err := findUnshare()
 	if err != nil {
 		return nil, err

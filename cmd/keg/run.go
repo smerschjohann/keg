@@ -228,13 +228,13 @@ func runAction(ctx context.Context, c *cliCommand) error {
 	// Serve egress channel A while the sandbox runs; closing the sandbox
 	// tears the session down (THREAT_MODEL §8.1: only controlled channels).
 	if plan.EgressDNS != nil {
-		if err := sb.StartEgressDNS(*plan.EgressDNS); err != nil {
+		if err := sb.StartEgressDNS(*plan.EgressDNS, plan.TCPEndpoints); err != nil {
 			fmt.Fprintf(os.Stderr, "keg: egress dns: %v\n", err)
 		}
 	}
 	if len(plan.SNIDomains) > 0 {
 		err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
-			Whitelist:     plan.SNIDomains,
+			SNIDomains:    plan.SNIDomains,
 			UpstreamProxy: upstreamProxyFromEnv(os.Getenv),
 		})
 		if err != nil {

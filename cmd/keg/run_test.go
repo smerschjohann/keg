@@ -87,11 +87,11 @@ func TestBuildRunPlan_ProxyEnvInjected(t *testing.T) {
 		t.Errorf("EnvSet[HTTPS_PROXY] = %q, want %q", plan.EnvSet["HTTPS_PROXY"], url)
 	}
 	if strings.Join(plan.SNIDomains, ",") != "proxy.golang.org" {
-		t.Errorf("EgressWhitelist = %v, want [proxy.golang.org]", plan.SNIDomains)
+		t.Errorf("SNIDomains = %v, want [proxy.golang.org]", plan.SNIDomains)
 	}
 }
 
-func TestBuildRunPlan_NoWhitelistNoProxyEnv(t *testing.T) {
+func TestBuildRunPlan_NoSNIDomainsNoProxyEnv(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\n")
 
@@ -103,7 +103,7 @@ func TestBuildRunPlan_NoWhitelistNoProxyEnv(t *testing.T) {
 		t.Errorf("proxy marker set without whitelist: %v", plan.EnvSet)
 	}
 	if len(plan.SNIDomains) != 0 {
-		t.Errorf("EgressWhitelist = %v, want empty", plan.SNIDomains)
+		t.Errorf("SNIDomains = %v, want empty", plan.SNIDomains)
 	}
 }
 

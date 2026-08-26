@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strings"
 
+	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/egress/dns"
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 
@@ -36,7 +39,7 @@ func ProxyEnv(domains []string) map[string]string {
 // EgressProxyConfig is the host-side policy served on channel A.
 type EgressProxyConfig struct {
 	// Whitelist of exact domains and "*.suffix" patterns.
-	Whitelist []string
+	SNIDomains []string
 	// UpstreamProxy ("host:port") forwards allowed targets through the
 	// restrictive corporate proxy; empty dials directly.
 	UpstreamProxy string
@@ -67,10 +70,14 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 	if audit == nil {
 		audit = os.Stderr
 	}
+	rawTable := s.raw
 	server := proxy.Server{
-		Whitelist:     cfg.Whitelist,
+		SNIDomains:    cfg.SNIDomains,
 		UpstreamProxy: cfg.UpstreamProxy,
 		DialTimeout:   0,
+		RawTargetCheck: func(hostPort string) bool {
+			return rawTable != nil && rawTable.check(hostPort)
+		},
 		Audit: func(ev proxy.AuditEvent) {
 			w := bufio.NewWriter(audit)
 			_, _ = fmt.Fprintln(w, proxy.FormatAudit(ev.Allowed, ev.Host))
@@ -84,15 +91,25 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 // StartEgressDNS serves the filtering resolver on channel B until the
 // sandbox exits. The :53 listener lives in the netns stage; this host side
 // applies policy and reaches the upstream with real network access.
-func (s *Sandbox) StartEgressDNS(cfg DNSConfig) error {
+func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) error {
 	file := s.Channel(FDDNS)
 	if file == nil {
 		return fmt.Errorf("egress dns: channel fd %d not available", FDDNS)
 	}
+	table := &rawEndpoints{byIP: map[string]rawEntry{}}
+	s.raw = table
+	s.rawCfg = rawCfg{DNSConfig: cfg, Endpoints: endpoints}
 	resolver := &dns.Resolver{
 		Hosts:     cfg.Hosts,
 		Whitelist: cfg.Whitelist,
 		Upstream:  cfg.Upstream,
+		OnA: func(name string, ips []net.IP) {
+			for _, ep := range s.rawCfg.Endpoints {
+				if name == strings.ToLower(ep.Host) || strings.HasSuffix(name, "."+strings.ToLower(ep.Host)) {
+					table.allow(ep.Host, ips, ep.Ports)
+				}
+			}
+		},
 	}
 	go func() { _ = dns.Serve(muxado.Server(file, nil), resolver) }()
 	return nil

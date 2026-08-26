@@ -33,6 +33,9 @@ type stageConfig struct {
 	Args        []string   `json:"args"`
 	DNS         *DNSConfig `json:"dns,omitempty"`
 	Transparent bool       `json:"transparent,omitempty"`
+	// TransparentPorts are the tcp_endpoints ports nftables redirects to
+	// the raw relay (:443 is redirected for SNI traffic independently).
+	TransparentPorts []int `json:"transparent_ports,omitempty"`
 }
 
 func init() {
@@ -103,7 +106,7 @@ func netnsStageMain() {
 	}
 
 	if cfg.Transparent {
-		if err := setupTransparentNet(); err != nil {
+		if err := setupTransparentNet(cfg.TransparentPorts); err != nil {
 			fmt.Fprintf(os.Stderr, "keg netns stage: transparent: %v\n", err)
 			os.Exit(125)
 		}

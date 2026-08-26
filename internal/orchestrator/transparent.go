@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 
 	"golang.ngrok.com/muxado"
 )
@@ -22,7 +23,7 @@ const transparentListenAddr = "127.0.0.1:7443"
 
 // setupTransparentNet installs dummy route + nftables ruleset. Requires the
 // stage's capabilities (runs before dropCapabilities).
-func setupTransparentNet() error {
+func setupTransparentNet(ports []int) error {
 	run := func(name string, args ...string) error {
 		cmd := exec.CommandContext(context.Background(), name, args...)
 		out, err := cmd.CombinedOutput()
@@ -45,7 +46,7 @@ func setupTransparentNet() error {
 		return fmt.Errorf("tempfile: %w", err)
 	}
 	defer func() { _ = os.Remove(rulesetFile.Name()) }()
-	if _, err := rulesetFile.WriteString(ruleset); err != nil {
+	if _, err := io.Copy(rulesetFile, rulesetReader(ports)); err != nil {
 		_ = rulesetFile.Close()
 		return fmt.Errorf("write ruleset: %w", err)
 	}
@@ -58,18 +59,20 @@ func setupTransparentNet() error {
 	return nil
 }
 
-const ruleset = `table ip keg {
+func rulesetReader(ports []int) io.Reader {
+	var b strings.Builder
+	b.WriteString(`table ip keg {
   chain natout {
     type nat hook output priority -100; policy accept;
     ip daddr 127.0.0.0/8 return
-    udp dport 53 redirect to :53
-    tcp dport 443 redirect to :7443
-  }
-  chain enforce {
-    type filter hook output priority 10; policy accept;
-    ip daddr 127.0.0.0/8 accept
-    udp dport 443 drop
-    drop
+    udp dport 53 redirect to :53`)
+	for _, port := range ports {
+		fmt.Fprintf(&b, "\n    tcp dport %d redirect to :7443", port)
+	}
+	if !containsInt(ports, 443) {
+		b.WriteString("\n    tcp dport 443 redirect to :7443")
+	}
+	b.WriteString(`
   }
   chain enforce {
     type filter hook output priority 10; policy accept;
@@ -78,7 +81,18 @@ const ruleset = `table ip keg {
     drop
   }
 }
-`
+`)
+	return strings.NewReader(b.String())
+}
+
+func containsInt(list []int, v int) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
 
 func startTransparentRelay(file *os.File) error {
 	var lc net.ListenConfig

@@ -17,8 +17,8 @@ func TestServer_CONNECTAllowed(t *testing.T) {
 	target := echoServer(t)
 	client, server := pipeSessions(t)
 	startServer(t, server, Server{
-		Whitelist: []string{"*.example.com"},
-		Dial:      fakeDial(target),
+		SNIDomains: []string{"*.example.com"},
+		Dial:       fakeDial(target),
 	})
 
 	resp, stream := speakCONNECT(t, client, "data.example.com:"+portOf(target))
@@ -48,7 +48,7 @@ func TestServer_CONNECTDenied(t *testing.T) {
 	var audits []AuditEvent
 	client, server := pipeSessions(t)
 	startServer(t, server, Server{
-		Whitelist:   []string{"proxy.golang.org"},
+		SNIDomains:  []string{"proxy.golang.org"},
 		DialTimeout: time.Second,
 		Audit:       func(e AuditEvent) { audits = append(audits, e) },
 	})
@@ -71,7 +71,7 @@ func TestServer_UpstreamRefusesConnect(t *testing.T) {
 	upstream := echoServer(t) // accepts TCP but never answers CONNECT properly
 	client, server := pipeSessions(t)
 	startServer(t, server, Server{
-		Whitelist:     []string{"*.example.com"},
+		SNIDomains:    []string{"*.example.com"},
 		UpstreamProxy: upstream,
 		DialTimeout:   500 * time.Millisecond,
 	})
@@ -113,8 +113,8 @@ func TestServer_PlainHTTPAllowed(t *testing.T) {
 
 	client, server := pipeSessions(t)
 	startServer(t, server, Server{
-		Whitelist: []string{"web.example.com"},
-		Dial:      fakeDial(addr),
+		SNIDomains: []string{"web.example.com"},
+		Dial:       fakeDial(addr),
 	})
 
 	stream := openStream(t, client)
@@ -134,7 +134,7 @@ func TestServer_PlainHTTPAllowed(t *testing.T) {
 // origin-form requests.
 func TestServer_PlainHTTPDenied(t *testing.T) {
 	client, server := pipeSessions(t)
-	startServer(t, server, Server{Whitelist: []string{"web.example.com"}, DialTimeout: time.Second})
+	startServer(t, server, Server{SNIDomains: []string{"web.example.com"}, DialTimeout: time.Second})
 
 	stream := openStream(t, client)
 	fmt.Fprint(stream, "GET / HTTP/1.1\r\nHost: blocked.example.com\r\n\r\n")
@@ -162,8 +162,8 @@ func TestServer_GoroutineLeakFree(t *testing.T) {
 	serveDone := make(chan error, 1)
 	go func() {
 		serveDone <- Serve(server, Server{
-			Whitelist: []string{"*.example.com"},
-			Dial:      fakeDial(target),
+			SNIDomains: []string{"*.example.com"},
+			Dial:       fakeDial(target),
 		})
 	}()
 
