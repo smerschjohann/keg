@@ -5,8 +5,9 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M3 vollständig (inkl. Transparent-Modus), M4 teilweise** (Details je Abschnitt),
-> jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
+> Stand: **Phase 0 + M1–M4 vollständig** (inkl. Transparent-Modus und
+> Port-Rückkanal), M5 teilweise (Details je Abschnitt).
+> Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
 ---
@@ -461,10 +462,9 @@ bricht die Poller-Registrierung.
 
 ## 6. WP-M4 — Templates, Vars, Env, Ports
 
-**Status:** 🔶 §6.1 erledigt (Template-Engine + Anwendung), §6.2–§6.4 offen
-(Teile vorweggenommen: PortSpec-Parsing inkl. String-/Mapping-Formen sitzt
-in `internal/config`; `env.set`/`env.unset` wird bereits vom Arg-Builder
-angewendet; Weak-Flag-Gate aus 3.2 existiert).
+**Status:** ✅ erledigt — §6.1–§6.4 komplett (Template-Engine, first-class
+env/bwrap_args, Sprach-Templates mit Toolchain-Erkennung, Port-Rückkanal
+Kanal E inkl. Integrationstests). Umsetzungsnotizen am Abschnittsende.
 
 ### 6.1 Template-Engine (`internal/template`) — ✅
 
@@ -480,29 +480,75 @@ angewendet; Weak-Flag-Gate aus 3.2 existiert).
 * Anwendungsfelder umgesetzt: mounts src/dest, dns.hosts-Werte, env.set-
   Werte, ports-Namen. Alles Übrige bleibt literal by construction.
 
-### 6.2 First-class `env` & `bwrap_args`
+### 6.2 First-class `env` & `bwrap_args` — ✅
 
-* unset-vor-set Semantik; Werte template-bar; Weak-Flag-Gate (aus 3.2).
+* unset-vor-set Semantik (`TestBuildArgs_EnvUnsetBeforeSet`); Werte aus
+  `env.set` sind template-bar (`resolveTemplates`, Feldpfad im Fehler);
+  Weak-Flag-Gate für `bwrap_args` inkl. Root-Bind-Erkennung (aus 3.2,
+  Goldentests gepinnt).
 
-### 6.3 Sprach-Templates (builtin)
+### 6.3 Sprach-Templates (builtin) — ✅
 
-* go/java/node/python als Datenstrukturen; Cache-Quellen-Erkennung
-  (`go env GOMODCACHE` etc.) mit Fallbacks; GOROOT-Mapping.
+* go/java/node/python als Datenstrukturen (`config.ExpandTemplates`, rein);
+  Cache-Quellen-Erkennung (`DetectToolchainPaths` über `go env GOMODCACHE /
+  GOCACHE / GOROOT` mit Injektions-Seams); fehlendes Go ⇒ leere Pfade,
+  keine Mounts (fail-closed), Sandbox-Side-Locations bleiben gesetzt.
+* GOROOT-Mapping: liegt der GOROOT außerhalb von `/usr`, wird er ro an
+  seinen eigenen Pfad gebunden und `GOROOT/bin` vor den PATH gestellt
+  (`Plan.ExtraPathDirs`).
+* Additiv: mehrere Templates kombinieren Env+Mounts; explizite
+  `env.set`-Werte schlagen Template-Defaults.
 
-**Integrationstest:** `keg run -- go build ./...` im Testrepo läuft offline
-aus Warm-Cache (Cache-Verzeichnisse als Fixtures).
+**Integrationstest:** `TestSandboxGoTemplateOfflineBuild` — Host-Warm-Build
+füllt Cache-Fixtures, Sandbox-Build läuft offline daraus (`go version &&
+go build -o hello . && ./hello`).
 
-### 6.4 Port-Rückkanal (Kanal E)
+### 6.4 Port-Rückkanal (Kanal E) — ✅
 
-* Parser für `"3000"`, `"src:dst"`, `{name, port, dynamic}`; Host-Bind
-  **ausschließlich** `127.0.0.1`; `dynamic` vergibt freien Port und exportiert
-  `KEG_PORT_<name>`.
+* Parser sitzt seit Anfang in `internal/config`; Auflösung/Dynamic-
+  Allocation/Framing/Forwarder in `internal/portsfw`:
+  * `Resolve(specs, alloc)` — dynamische Ports werden **vor** dem Launch
+    durch echtes Binden von `127.0.0.1:0` reserviert; der Listener selbst
+    IST die Reservierung (kein Steal-Fenster zwischen Planung und Serve).
+  * Framing je Stream: 2-Byte-Big-Endian-Zielport (`EncodeTarget/
+    DecodeTarget`, Werte außerhalb 1..65535 abgelehnt), danach raw Bytes.
+  * Guest-Forwarder (`ServeGuest`) dialt ausschließlich deklarierte Ziele
+    auf dem Sandbox-Loopback; alles andere wird ohne Dial geschlossen
+    (Deny-by-default, Allowlist per `KEG_PORTS`-Marker;
+    `TestInvariant_PortChannelGuestDenyList` pinnt das End-to-End).
+  * Host-Seite (`Sandbox.StartPortsForward`): Listener **ausschließlich**
+    auf 127.0.0.1; statische Kollision ⇒ klarer Fehler mit Adresse.
+* Kanalfd 6 (`FDPorts`), `FDPreserved=4`; Stage reicht fd 3..6 durch.
+* `KEG_PORT_<NAME>` für benannte Einträge in der Sandbox-Env.
 
-**Tests:** Parser-Tabellentests; Bind-Verweigerung bei Nicht-Loopback;
-Dynamic-Allocation setzt Env korrekt.
+**Tests:** Parser-/Resolve-/Env-/Framing-Tabellentests; End-to-End über
+AF_UNIX-Socketpairs (`TestChannelE_EndToEnd` mit Goroutine-Leak-Check);
+Integrationstests: dynamischer Dev-Server + statischer Port vom Host-Loopback
+aus erreichbar (`TestSandboxPortBackChannel`), Deny-Liste
+(`TestInvariant_PortChannelGuestDenyList`).
 
-**DoD:** Playwright-artiger Workflow: Dev-Server in der Sandbox, Host-curl auf
-`127.0.0.1:<port>` antwortet (Integrationstest).
+**DoD:** ✅ Playwright-artiger Workflow: Dev-Server in der Sandbox, Host-curl
+auf `127.0.0.1:<port>` antwortet.
+
+#### Umsetzungsnotizen M4
+
+1. **Port-Env-Namen sanitisiert:** CONCEPT.md §4.9 zeigt
+   `KEG_PORT_dev-server` — ein Bindestrich ist in Shells nicht
+   referenzierbar (`$KEG_PORT_dev-server` parst als Subtraktion).
+   Namen werden auf `[A-Z0-9_]` gemappt: `KEG_PORT_DEV_SERVER`.
+2. **Reservierung durch Binden statt Port-Picken:** „Freien Port suchen und
+   wieder freigeben“ hat ein Race-Fenster; keg bindet :0 und behält den
+   Listener bis zum Start des Forwardings. `ResolvedPort.Listener` trägt
+   die Reservierung durch alle Ebenen.
+3. **muxado-Accept wacht nicht von selbst auf:** Das Session-Close des
+   Partners beendet `Accept()` nicht zuverlässig — `ServeGuest` nimmt daher
+   einen Context, dessen Abbruch die eigene Session schließt (gleiche
+   Teardown-Reihenfolge wie Kanal A: erst Session, dann darauf Ruhende).
+4. **Templates vor Repo-Env mergen:** Template-Defaults gehen zuerst in die
+   Env, `env.set` gewinnt Konflikte — Templates bleiben additive Bausteine.
+5. **Tilde-Quellen:** Template-Mounts nutzen `~/.m2` etc. literal und werden
+   wie User-Mounts beim Planbau expandiert — eine Quelle der Wahrheit für
+   Pfad-Expansion.
 
 ---
 
@@ -646,7 +692,7 @@ nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
-Modus/tcp_endpoints ✅) · **M4** 🔶 (§6.1 erledigt).
+Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4).
 Erster nutzbarer Schnitt: isolierte Shell mit Overlay-Modi, kontrolliertem
 HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf :53
 (Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
