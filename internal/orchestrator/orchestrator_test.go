@@ -275,6 +275,67 @@ func TestBuildArgs_OverlayModes(t *testing.T) {
 			t.Errorf("want --overlay-src lower + --overlay RWSRC WORKDIR DEST, got %v", args)
 		}
 	})
+	t.Run("mount ephemeral uses tmp overlay over mount source", func(t *testing.T) {
+		p := basePlan()
+		p.Mounts = []config.Mount{
+			{Src: "/home/user/.cache/go/mod", Dest: "/home/sandbox/.cache/go/mod", Mode: config.MountEphemeral},
+		}
+		args, err := BuildArgs(p)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		if !containsSequence(args, "--overlay-src", "/home/user/.cache/go/mod", "--tmp-overlay", "/home/sandbox/.cache/go/mod") {
+			t.Errorf("want --overlay-src + --tmp-overlay over mount src/dest, got %v", args)
+		}
+		if containsSequence(args, "--bind", "/home/user/.cache/go/mod", "/home/sandbox/.cache/go/mod") {
+			t.Errorf("plain bind must not coexist with ephemeral mount: %v", args)
+		}
+	})
+	t.Run("mount disk uses persistent overlay over mount source", func(t *testing.T) {
+		p := basePlan()
+		p.Mounts = []config.Mount{
+			{
+				Src:         "/home/user/.cache/go/mod",
+				Dest:        "/home/sandbox/.cache/go/mod",
+				Mode:        config.MountDisk,
+				OverlayRW:   "/var/lib/containers/storage/sandbox/cache-test/mod-rw",
+				OverlayWork: "/var/lib/containers/storage/sandbox/cache-test/mod-work",
+			},
+		}
+		args, err := BuildArgs(p)
+		if err != nil {
+			t.Fatalf("BuildArgs: %v", err)
+		}
+		if !containsSequence(args, "--overlay-src", "/home/user/.cache/go/mod",
+			"--overlay", "/var/lib/containers/storage/sandbox/cache-test/mod-rw",
+			"/var/lib/containers/storage/sandbox/cache-test/mod-work",
+			"/home/sandbox/.cache/go/mod") {
+			t.Errorf("want --overlay-src + --overlay RW WORK DEST, got %v", args)
+		}
+	})
+	t.Run("has overlay detection", func(t *testing.T) {
+		p := basePlan()
+		if p.HasOverlay() {
+			t.Errorf("basePlan should not have overlay")
+		}
+		p.Overlay = OverlayEphemeral
+		if !p.HasOverlay() {
+			t.Errorf("OverlayEphemeral should have overlay")
+		}
+		p.Overlay = OverlayPlain
+		p.Mounts = []config.Mount{
+			{Src: "/a", Dest: "/b", Mode: config.MountEphemeral},
+		}
+		if !p.HasOverlay() {
+			t.Errorf("MountEphemeral should have overlay")
+		}
+		p.Mounts = []config.Mount{
+			{Src: "/a", Dest: "/b", Mode: config.MountDisk},
+		}
+		if !p.HasOverlay() {
+			t.Errorf("MountDisk should have overlay")
+		}
+	})
 }
 
 func TestBuildArgs_SecretsDirReadOnly(t *testing.T) {

@@ -235,7 +235,7 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	// Capture stderr to detect the overlay EBUSY race while still passing
 	// it through to the caller's stream.
 	var errBuf bytes.Buffer
-	if p.Overlay != OverlayPlain {
+	if p.HasOverlay() {
 		cmd.Stderr = io.MultiWriter(safeStderr, &errBuf)
 	} else {
 		cmd.Stderr = safeStderr

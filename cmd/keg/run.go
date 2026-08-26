@@ -21,7 +21,7 @@ import (
 // buildRunPlan loads and validates all configuration for a sandbox run and
 // produces the orchestrator plan. It performs no process management —
 // Launch owns that. Errors name the offending file/field.
-func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator.Overlay, diskName string) (orchestrator.Plan, error) {
+func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator.Overlay, diskName string, cacheOverlay orchestrator.Overlay, isolatedCacheName string) (orchestrator.Plan, error) {
 	root := repoDir
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
@@ -94,6 +94,16 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	// BuildArgs' caller like any other mount).
 	if len(repo.Templates) > 0 {
 		tc := config.DetectToolchainPaths(exec.LookPath, config.HostGoEnv)
+		if effective.Paths.GoModCache != "" {
+			if exp, expErr := config.ExpandPath(effective.Paths.GoModCache); expErr == nil {
+				tc.GoModCache = exp
+			}
+		}
+		if effective.Paths.GoBuildCache != "" {
+			if exp, expErr := config.ExpandPath(effective.Paths.GoBuildCache); expErr == nil {
+				tc.GoBuildCache = exp
+			}
+		}
 		tplMounts, tplEnv, terr := config.ExpandTemplates(repo.Templates, plan.SandboxHome, tc)
 		if terr != nil {
 			return orchestrator.Plan{}, fmt.Errorf("templates: %w", terr)
@@ -103,7 +113,34 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 			if expanded, expErr := config.ExpandPath(src); expErr == nil {
 				src = expanded
 			}
-			plan.Mounts = append(plan.Mounts, config.Mount{Src: src, Dest: m.Dest, Mode: m.Mode})
+			mount := config.Mount{Src: src, Dest: m.Dest, Mode: m.Mode}
+			if cacheOverlay == orchestrator.OverlayEphemeral {
+				mount.Mode = config.MountEphemeral
+			} else if cacheOverlay == orchestrator.OverlayDisk && isolatedCacheName != "" {
+				mount.Mode = config.MountDisk
+				storageBase := effective.Paths.StorageBase
+				if storageBase == "" {
+					storageBase = "/var/lib/containers/storage/sandbox"
+				}
+				if expanded, expErr := config.ExpandPath(storageBase); expErr == nil {
+					storageBase = expanded
+				}
+				cacheDir := filepath.Join(storageBase, "cache-"+isolatedCacheName)
+				key := filepath.Base(m.Dest)
+				if key == "" || key == "." || key == "/" {
+					key = "cache"
+				}
+				rwDir := filepath.Join(cacheDir, key+"-rw")
+				workDir := filepath.Join(cacheDir, key+"-work")
+				for _, sub := range []string{rwDir, workDir} {
+					if mkErr := os.MkdirAll(sub, 0o750); mkErr != nil { // #nosec G703 -- storage_base from trusted local user config
+						return orchestrator.Plan{}, fmt.Errorf("prepare cache layer %s: %w", cacheDir, mkErr)
+					}
+				}
+				mount.OverlayRW = rwDir
+				mount.OverlayWork = workDir
+			}
+			plan.Mounts = append(plan.Mounts, mount)
 		}
 		for k, v := range tplEnv {
 			if _, exists := plan.EnvSet[k]; !exists {
@@ -307,7 +344,18 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		overlay = orchestrator.OverlayDisk
 	}
 
-	plan, err := buildRunPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName)
+	cacheOverlay := orchestrator.OverlayPlain
+	isolatedCacheName := c.String("isolated-cache-name")
+	switch {
+	case c.Bool("isolate-caches") && isolatedCacheName != "":
+		return fmt.Errorf("--isolate-caches and --isolated-cache-name are mutually exclusive")
+	case c.Bool("isolate-caches"):
+		cacheOverlay = orchestrator.OverlayEphemeral
+	case isolatedCacheName != "":
+		cacheOverlay = orchestrator.OverlayDisk
+	}
+
+	plan, err := buildRunPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName)
 	if err != nil {
 		return err
 	}

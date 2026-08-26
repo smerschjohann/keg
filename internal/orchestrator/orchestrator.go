@@ -142,6 +142,20 @@ type Plan struct {
 	Command []string // command to exec after `--`
 }
 
+// HasOverlay reports whether the plan involves any overlay mounts (either on
+// the repo itself or on custom mounts).
+func (p Plan) HasOverlay() bool {
+	if p.Overlay != OverlayPlain {
+		return true
+	}
+	for _, m := range p.Mounts {
+		if m.Mode == config.MountEphemeral || m.Mode == config.MountDisk {
+			return true
+		}
+	}
+	return false
+}
+
 // DNSConfig is the host-side policy for egress channel B.
 type DNSConfig struct {
 	// Hosts are static mappings ("name" or "*.suffix" → IP) answered
@@ -257,6 +271,11 @@ func BuildArgs(p Plan) ([]string, error) {
 			args = append(args, "--bind", m.Src, m.Dest)
 		case config.MountDev:
 			args = append(args, "--dev-bind", m.Src, m.Dest)
+		case config.MountEphemeral:
+			args = append(args, "--overlay-src", m.Src, "--tmp-overlay", m.Dest)
+		case config.MountDisk:
+			args = append(args, "--overlay-src", m.Src,
+				"--overlay", m.OverlayRW, m.OverlayWork, m.Dest)
 		default: // ro (explicit or default)
 			args = append(args, "--ro-bind", m.Src, m.Dest)
 		}

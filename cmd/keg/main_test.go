@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,13 +83,86 @@ func TestCLI_HelpListsSubcommandsWithUsage(t *testing.T) {
 	}
 }
 
-func TestCLI_StubCommandsRun(t *testing.T) {
-	// Until the work packages land, every subcommand must at least execute
-	// without error so the binary stays usable end-to-end.
-	for _, args := range [][]string{{"list"}, {"clean"}, {"clean-cache"}} {
-		if err := runCLI(t, args...); err != nil {
-			t.Errorf("keg %v: unexpected error: %v", args, err)
-		}
+func TestCLI_ListAndClean(t *testing.T) {
+	storageBase := t.TempDir()
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	if err := os.WriteFile(userCfg, []byte("paths:\n  storage_base: "+storageBase+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initially empty
+	cmd := NewCommand()
+	var out strings.Builder
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "--user-config", userCfg, "list"}); err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "No persistent layers found") {
+		t.Errorf("empty list output = %q, want 'No persistent layers found'", out.String())
+	}
+
+	// 2. Create repo layer "agent-1" and cache layer "cache-mycache"
+	if err := os.MkdirAll(filepath.Join(storageBase, "agent-1", "rw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storageBase, "agent-1", "rw", "data.txt"), []byte("agent data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(storageBase, "cache-mycache", "mod-rw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	cmd = NewCommand()
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "--user-config", userCfg, "list"}); err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	listOut := out.String()
+	if !strings.Contains(listOut, "agent-1") || !strings.Contains(listOut, "mycache") {
+		t.Errorf("list output missing layers: %s", listOut)
+	}
+
+	// 3. Clean specific repo layer
+	out.Reset()
+	cmd = NewCommand()
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "--user-config", userCfg, "clean", "agent-1"}); err != nil {
+		t.Fatalf("clean failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(storageBase, "agent-1")); !os.IsNotExist(err) {
+		t.Error("agent-1 should be deleted")
+	}
+
+	// 4. Clean cache layer
+	out.Reset()
+	cmd = NewCommand()
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "--user-config", userCfg, "clean-cache", "mycache"}); err != nil {
+		t.Fatalf("clean-cache failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(storageBase, "cache-mycache")); !os.IsNotExist(err) {
+		t.Error("cache-mycache should be deleted")
+	}
+}
+
+func TestCLI_CleanErrors(t *testing.T) {
+	storageBase := t.TempDir()
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	if err := os.WriteFile(userCfg, []byte("paths:\n  storage_base: "+storageBase+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// clean without name
+	err := runCLI(t, "--user-config", userCfg, "clean")
+	if err == nil || !strings.Contains(err.Error(), "clean requires a layer NAME or --all") {
+		t.Errorf("clean without name should fail, got: %v", err)
+	}
+
+	// clean non-existent layer
+	err = runCLI(t, "--user-config", userCfg, "clean", "non-existent")
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("clean non-existent should fail, got: %v", err)
 	}
 }
 
@@ -104,4 +179,19 @@ func TestCLI_RunWithoutConfigFailsWithClearError(t *testing.T) {
 	if !strings.Contains(err.Error(), ".keg.yaml") {
 		t.Errorf("error must name .keg.yaml: %v", err)
 	}
+}
+
+func TestCLI_RunOverlayFlagsMutualExclusivity(t *testing.T) {
+	t.Run("ephemeral and disk-overlay mutually exclusive", func(t *testing.T) {
+		err := runCLI(t, "run", "--ephemeral", "--disk-overlay", "foo")
+		if err == nil || !strings.Contains(err.Error(), "--ephemeral and --disk-overlay are mutually exclusive") {
+			t.Errorf("expected mutual exclusivity error, got %v", err)
+		}
+	})
+	t.Run("isolate-caches and isolated-cache-name mutually exclusive", func(t *testing.T) {
+		err := runCLI(t, "run", "--isolate-caches", "--isolated-cache-name", "foo")
+		if err == nil || !strings.Contains(err.Error(), "--isolate-caches and --isolated-cache-name are mutually exclusive") {
+			t.Errorf("expected mutual exclusivity error, got %v", err)
+		}
+	})
 }

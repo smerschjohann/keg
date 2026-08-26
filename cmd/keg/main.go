@@ -56,36 +56,23 @@ func NewCommand() *cli.Command {
 						Name:  "disk-overlay",
 						Usage: "use a persistent on-disk layer with the given NAME",
 					},
+					&cli.BoolFlag{
+						Name:  "isolate-caches",
+						Usage: "discard all cache writes when the sandbox exits (invisible tmpfs overlay over cache mounts)",
+					},
+					&cli.StringFlag{
+						Name:  "isolated-cache-name",
+						Usage: "use a persistent on-disk cache layer with the given NAME",
+					},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return runAction(ctx, c)
 				},
 			},
 			delegateCommand(),
-			{
-				Name:  "list",
-				Usage: "list persistent overlay layers",
-				Action: func(_ context.Context, _ *cli.Command) error {
-					fmt.Println("list: not implemented yet (WP-M6)")
-					return nil
-				},
-			},
-			{
-				Name:  "clean",
-				Usage: "delete a persistent overlay layer",
-				Action: func(_ context.Context, _ *cli.Command) error {
-					fmt.Println("clean: not implemented yet (WP-M6)")
-					return nil
-				},
-			},
-			{
-				Name:  "clean-cache",
-				Usage: "delete persistent cache overlay layers",
-				Action: func(_ context.Context, _ *cli.Command) error {
-					fmt.Println("clean-cache: not implemented yet (WP-M6)")
-					return nil
-				},
-			},
+			listCommand(),
+			cleanCommand(),
+			cleanCacheCommand(),
 			{
 				Name:  "serve",
 				Usage: "start the remote-control daemon (unix socket/TCP)",

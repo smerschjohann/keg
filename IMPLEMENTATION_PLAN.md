@@ -5,8 +5,9 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M5 vollständig** (inkl. Transparent-Modus,
-> Port-Rückkanal und Delegations-Kanal C inkl. End-to-End-Integrationstest).
+> Stand: **Phase 0 + M1–M6 vollständig** (inkl. Transparent-Modus,
+> Port-Rückkanal, Delegations-Kanal C, isolierten Cache-Overlays und
+> Layer-Management mit Stufenlöschung).
 > Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -647,25 +648,24 @@ reaktiviert und stabil).
 
 ## 8. WP-M6 — Overlays & Layer-Management
 
-**Status:** 🔶 teilweise vorweggenommen — plain/`--ephemeral`/
-`--disk-overlay NAME` sind seit M1 funktionsfähig (Arg-Builder + CLI-Flags
-+ Persistenz-Integrationstest, siehe M1-Umsetzungsnotizen). Offen:
-`isolated-cache-name`, Cache-Quellen-Erkennung, Management-Kommandos
-(`list`/`clean`/`clean-cache` sind noch Stubs) samt Stufenlöschung und
-die EBUSY-Retry-Strategie für das Layer-Lifecycle generalisieren.
+**Status:** ✅ erledigt (inkl. `--isolate-caches`, `--isolated-cache-name`, `list`/`clean`/`clean-cache` und Stufenlöschung).
 
-* [ ] Modi ephemeral/disk-overlay ~~in den Arg-Builder integrieren~~ ✅;
-      offen: isolated-cache-name (Goldentests erweitern); UID-kompatibles
-      `mkdirAll` für Upper/Workdirs (aktuell `MkdirAll` mit 0o750 unter
-      `paths.storage_base`).
-* [ ] Management-Kommandos `list/clean/clean-cache/clean-all` mit
-      Stufenlöschung (chmod → unshare-mount → sudo, letzteres interaktiv).
+* [x] Modi `ephemeral` und `disk-overlay` in Arg-Builder & CLI integriert.
+* [x] Modi `--isolate-caches` (ephemeres tmp-overlay über Cache-Mounts) und `--isolated-cache-name NAME` (persistente Disk-Layer `<storage_base>/cache-<NAME>/...` via `MountEphemeral`/`MountDisk`).
+* [x] Cache-Quellen-Erkennung und User-Config-Overrides (`paths.go_mod_cache`, `paths.go_build_cache`).
+* [x] EBUSY-Retry-Strategie für alle Overlay-Mounts generalisiert (`Plan.HasOverlay()`).
+* [x] Management-Kommandos `list`, `clean`, `clean-cache` in `internal/storage` & CLI mit Stufenlöschung (chmod 0700/0600 → unshare -r mount → sudo).
 
-**Tests:** Overlay-Args in Goldens; Layer-Lifecycle-Integrationstest
-(erstellen → sichtbar → clean → weg); `--ephemeral` lässt `git status`
-jungfräulich.
+**Tests:** Overlay-Args & Cache-Overlays in Unit-Tests; CLI-Flags & Mutual-Exclusivity-Tests; Layer-Lifecycle & Cache-Isolations-Integrationstests (`TestSandboxIsolateCaches`, `TestSandboxIsolatedCacheName`, `TestSandboxEphemeralOverlay`, `TestSandboxDiskOverlay`).
 
-**DoD:** Alle vier Overlay-Flags verhalten sich wie im Bestand dokumentiert.
+**DoD:** ✅ Alle vier Overlay-Flags verhalten sich wie im Bestand dokumentiert; `list`, `clean`, `clean-cache` vollständig funktionsfähig; `make lint test integration` grün.
+
+#### Umsetzungsnotizen M6 (empirisch verifiziert)
+
+1. **Cache-Mount-Modi:** `config.Mount` unterstützt neben `ro`/`rw`/`dev`/`tmpfs` nun `ephemeral` (`--overlay-src <Src> --tmp-overlay <Dest>`) und `disk` (`--overlay-src <Src> --overlay <RW> <WORK> <Dest>`).
+2. **Speicher-Hierarchie für Caches:** Persistente Cache-Layer liegen unter `<storage_base>/cache-<name>/{mod,build}-{rw,work}` (entsprechend CONCEPT.md §4.8).
+3. **Stufenlöschung (Tiered Deletion):** OverlayFS erzeugt Workdirs mit Mode `0000`. Stufe 1 repariert rekursiv Verzeichnis- (`0700`) und Datei-Rechte (`0600`) vor `os.RemoveAll`; Stufe 2 nutzt `unshare -r --mount rm -rf`; Stufe 3 bietet `sudo rm -rf`-Fallback.
+4. **Generalisierte EBUSY-Erkennung:** `Plan.HasOverlay()` deckt sowohl Repo-Overlays als auch Cache-Overlays ab, sodass bwrap-Overlay-Mount-Busy-Races bei allen Overlay-Typen abgefangen und bis zu 10× retry-t werden.
 
 ---
 
@@ -752,10 +752,11 @@ nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
 Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 ✅** (§7.1, §7.2
-vollständig inkl. e2e).
-Erster nutzbarer Schnitt nach M5 vollständig für den Bestands-Workflow nutzbar:
-isolierte Shell mit Overlay-Modi, kontrolliertem HTTP(S)-Egress (Kanal A) und
-echtem whitelist-filternden DNS auf :53 (Kanal B) inklusive cluster.local-
-Auflösung über kube-dns — wahlweise im Proxy- oder Transparent-Modus
-(rohes TCP via DNS-Korrelation) sowie Port-Rückkanal (Kanal E) und
-sichere Host-Delegation (Kanal C).
+vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung).
+Erster nutzbarer Schnitt nach M5/M6 vollständig für den Bestands-Workflow nutzbar:
+isolierte Shell mit allen Overlay-Modi (ephemeral, disk-overlay, isolate-caches,
+isolated-cache-name) sowie Layer-Management (list/clean/clean-cache),
+kontrolliertem HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf
+:53 (Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
+Proxy- oder Transparent-Modus (rohes TCP via DNS-Korrelation) sowie
+Port-Rückkanal (Kanal E) und sichere Host-Delegation (Kanal C).

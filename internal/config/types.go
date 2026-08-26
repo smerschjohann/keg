@@ -49,16 +49,18 @@ type MountMode string
 
 // Mount modes for custom binds.
 const (
-	MountRO    MountMode = "ro"
-	MountRW    MountMode = "rw"
-	MountDev   MountMode = "dev"
-	MountTmpfs MountMode = "tmpfs"
+	MountRO        MountMode = "ro"
+	MountRW        MountMode = "rw"
+	MountDev       MountMode = "dev"
+	MountTmpfs     MountMode = "tmpfs"
+	MountEphemeral MountMode = "ephemeral"
+	MountDisk      MountMode = "disk"
 )
 
 // Valid reports whether the mode is known.
 func (m MountMode) Valid() bool {
 	switch m {
-	case MountRO, MountRW, MountDev, MountTmpfs:
+	case MountRO, MountRW, MountDev, MountTmpfs, MountEphemeral, MountDisk:
 		return true
 	}
 	return false
@@ -72,9 +74,11 @@ type EnvSpec struct {
 
 // Mount is an additional filesystem bind declared by the repo.
 type Mount struct {
-	Src  string    `yaml:"src"`
-	Dest string    `yaml:"dest"`
-	Mode MountMode `yaml:"mode"`
+	Src         string    `yaml:"src"`
+	Dest        string    `yaml:"dest"`
+	Mode        MountMode `yaml:"mode"`
+	OverlayRW   string    `yaml:"-"` // host dir for disk overlay upper (OverlayDisk)
+	OverlayWork string    `yaml:"-"` // host dir for disk overlay work (OverlayDisk)
 }
 
 // SecretRef declares the need for a secret defined in the user config.
