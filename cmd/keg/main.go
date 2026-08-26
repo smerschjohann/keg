@@ -19,8 +19,9 @@ type cliCommand = cli.Command
 // can drive the CLI in-process (smoke tests, help-text assertions).
 func NewCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "keg",
-		Usage: "isolated development sandbox with zero-trust egress",
+		Name:      "keg",
+		Usage:     "Kernel-isolated Execution with Gateways — isolated development sandbox with zero-trust egress",
+		ErrWriter: os.Stderr,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "config",
@@ -72,6 +73,11 @@ func NewCommand() *cli.Command {
 						Name:    "env",
 						Aliases: []string{"e"},
 						Usage:   "pass through (-e VAR) or set (-e VAR=value) environment variable in sandbox (repeatable)",
+					},
+					&cli.StringSliceFlag{
+						Name:    "publish",
+						Aliases: []string{"p", "port"},
+						Usage:   "publish a container port to the host (e.g. -p 8080, -p 8080:8080, -p 127.0.0.1:8080:8080, -p :8080) (repeatable)",
 					},
 					&cli.BoolFlag{
 						Name:  "inherit-all",

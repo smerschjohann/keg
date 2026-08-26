@@ -1046,3 +1046,94 @@ func TestParseEnvFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePublishFlags(t *testing.T) {
+	tests := []struct {
+		name        string
+		entries     []string
+		wantCount   int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "single plain port",
+			entries:   []string{"8080"},
+			wantCount: 1,
+		},
+		{
+			name:      "multiple docker syntax ports",
+			entries:   []string{"8080", ":8080:8080", "8080:80", "127.0.0.1:8080:8080", ":8080"},
+			wantCount: 5,
+		},
+		{
+			name:        "invalid port syntax",
+			entries:     []string{"invalid"},
+			wantErr:     true,
+			errContains: "invalid",
+		},
+		{
+			name:        "non-loopback ip",
+			entries:     []string{"192.168.1.5:8080:80"},
+			wantErr:     true,
+			errContains: "only binds on loopback",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			specs, err := parsePublishFlags(tt.entries)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parsePublishFlags(%v) expected error, got nil", tt.entries)
+				}
+				if tt.errContains != "" && !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.errContains)) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parsePublishFlags(%v) unexpected error: %v", tt.entries, err)
+			}
+			if len(specs) != tt.wantCount {
+				t.Fatalf("len(specs) = %d, want %d", len(specs), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestBuildRunPlan_PortsPublishCLI(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+
+	publishFlags := []string{"8080", ":8080:8080", "3000:80", "127.0.0.1:9000:9000", ":5000"}
+	specs, err := parsePublishFlags(publishFlags)
+	if err != nil {
+		t.Fatalf("parsePublishFlags: %v", err)
+	}
+
+	if err := orchestrator.AddPortsToPlan(&plan, specs); err != nil {
+		t.Fatalf("AddPortsToPlan: %v", err)
+	}
+
+	if len(plan.Ports) != 5 {
+		t.Fatalf("plan.Ports = %d, want 5 (%+v)", len(plan.Ports), plan.Ports)
+	}
+
+	// Verify allowlist marker contains all guest ports: 8080, 8080, 80, 9000, 5000
+	wantAllowed := "8080,8080,80,9000,5000"
+	if got := plan.EnvSet[orchestrator.EnvPortsForward]; got != wantAllowed {
+		t.Errorf("%s = %q, want %q", orchestrator.EnvPortsForward, got, wantAllowed)
+	}
+
+	// Clean up any dynamic listeners created
+	for _, p := range plan.Ports {
+		if p.Listener != nil {
+			_ = p.Listener.Close()
+		}
+	}
+}

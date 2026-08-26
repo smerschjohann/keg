@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1032,5 +1034,81 @@ func TestInvariant_SetBeatsInheritedValue(t *testing.T) {
 	}
 	if envMap["MY_VAR"] != "explicit_value" {
 		t.Errorf("MY_VAR = %q, want 'explicit_value' (set beats inherit)", envMap["MY_VAR"])
+	}
+}
+
+func TestAddPortsToPlan(t *testing.T) {
+	plan := Plan{
+		EnvSet: make(map[string]string),
+	}
+
+	specs := []config.PortSpec{
+		{Name: "web", Guest: 8080, Dynamic: true},
+		{Guest: 3000, Host: 3000},
+	}
+
+	if err := AddPortsToPlan(&plan, specs); err != nil {
+		t.Fatalf("AddPortsToPlan: %v", err)
+	}
+
+	if len(plan.Ports) != 2 {
+		t.Fatalf("plan.Ports has %d entries, want 2", len(plan.Ports))
+	}
+
+	dyn := plan.Ports[0]
+	if dyn.Name != "web" || dyn.Guest != 8080 || dyn.HostPort == 0 || dyn.Listener == nil {
+		t.Errorf("dynamic entry = %+v, want valid listener and host port", dyn)
+	}
+	defer func() {
+		if dyn.Listener != nil {
+			_ = dyn.Listener.Close()
+		}
+	}()
+
+	stat := plan.Ports[1]
+	if stat.Guest != 3000 || stat.HostPort != 3000 {
+		t.Errorf("static entry = %+v, want 3000->3000", stat)
+	}
+
+	if got := plan.EnvSet["KEG_PORT_WEB"]; got != fmt.Sprint(dyn.HostPort) {
+		t.Errorf("KEG_PORT_WEB = %q, want %d", got, dyn.HostPort)
+	}
+	if got, want := plan.EnvSet[EnvPortsForward], "8080,3000"; got != want {
+		t.Errorf("%s = %q, want %q", EnvPortsForward, got, want)
+	}
+}
+
+func TestInvariant_PortPublishBindsOnlyLoopback(t *testing.T) {
+	// 1. Rejects non-loopback IP and 0.0.0.0
+	for _, invalidIP := range []string{"192.168.1.1:8080:80", "0.0.0.0:8080:80", "[::]:8080:80"} {
+		_, err := config.ParsePublishFlag(invalidIP)
+		if err == nil || !strings.Contains(err.Error(), "only binds on loopback") {
+			t.Fatalf("IP %q must be rejected, got: %v", invalidIP, err)
+		}
+	}
+
+	// 2. Dynamic port listener created by AddPortsToPlan binds only on loopback
+	plan := Plan{}
+	spec, err := config.ParsePublishFlag(":8080")
+	if err != nil {
+		t.Fatalf("ParsePublishFlag: %v", err)
+	}
+	if err := AddPortsToPlan(&plan, []config.PortSpec{spec}); err != nil {
+		t.Fatalf("AddPortsToPlan: %v", err)
+	}
+	if len(plan.Ports) != 1 {
+		t.Fatalf("plan.Ports = %d, want 1", len(plan.Ports))
+	}
+	p := plan.Ports[0]
+	if p.Listener == nil {
+		t.Fatal("dynamic port missing listener")
+	}
+	defer func() { _ = p.Listener.Close() }()
+	addr, ok := p.Listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener addr is %T, want *net.TCPAddr", p.Listener.Addr())
+	}
+	if !addr.IP.IsLoopback() {
+		t.Errorf("listener IP is %v, want loopback", addr.IP)
 	}
 }

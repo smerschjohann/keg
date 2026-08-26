@@ -484,3 +484,76 @@ env:
 		})
 	}
 }
+
+func TestParsePublishFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantGuest   int
+		wantHost    int
+		wantDynamic bool
+		wantErr     string
+	}{
+		{name: "plain port", input: "8080", wantGuest: 8080, wantHost: 8080},
+		{name: "host and container port", input: "8080:80", wantGuest: 80, wantHost: 8080},
+		{name: "same host and container port", input: "8080:8080", wantGuest: 8080, wantHost: 8080},
+		{name: "empty ip host and container", input: ":8080:8080", wantGuest: 8080, wantHost: 8080},
+		{name: "empty ip host and different container", input: ":8080:80", wantGuest: 80, wantHost: 8080},
+		{name: "loopback ip host and container", input: "127.0.0.1:8080:80", wantGuest: 80, wantHost: 8080},
+		{name: "loopback ip same host and container", input: "127.0.0.1:8080:8080", wantGuest: 8080, wantHost: 8080},
+		{name: "localhost host and container", input: "localhost:8080:80", wantGuest: 80, wantHost: 8080},
+		{name: "dynamic port with colon", input: ":8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with double colon", input: "::8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with ip", input: "127.0.0.1::8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with zero host", input: "0:8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with ip and zero host", input: "127.0.0.1:0:8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "ipv6 loopback with host and container", input: "[::1]:8080:80", wantGuest: 80, wantHost: 8080},
+		{name: "ipv6 loopback dynamic", input: "[::1]::8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "ipv6 loopback plain container", input: "[::1]:8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "tcp protocol suffix on plain port", input: "8080/tcp", wantGuest: 8080, wantHost: 8080},
+		{name: "tcp protocol suffix on host:container", input: "8080:80/tcp", wantGuest: 80, wantHost: 8080},
+		{name: "tcp protocol suffix on ip:host:container", input: "127.0.0.1:8080:80/TCP", wantGuest: 80, wantHost: 8080},
+		// Errors
+		{name: "empty", input: "", wantErr: "empty"},
+		{name: "invalid non-numeric", input: "abc", wantErr: "invalid"},
+		{name: "invalid host port", input: "abc:80", wantErr: "invalid"},
+		{name: "invalid container port", input: "80:abc", wantErr: "invalid"},
+		{name: "invalid ip host port", input: "127.0.0.1:abc:80", wantErr: "invalid"},
+		{name: "invalid ip container port", input: "127.0.0.1:80:abc", wantErr: "invalid"},
+		{name: "port 0 as container port", input: "0", wantErr: "out of range"},
+		{name: "port 0 as container in mapping", input: "8080:0", wantErr: "out of range"},
+		{name: "container port out of range", input: "70000", wantErr: "out of range"},
+		{name: "host port out of range", input: "70000:80", wantErr: "out of range"},
+		{name: "unsupported udp protocol", input: "8080/udp", wantErr: "only tcp is supported"},
+		{name: "unsupported sctp protocol", input: "8080/sctp", wantErr: "only tcp is supported"},
+		{name: "all interfaces 0.0.0.0 rejected", input: "0.0.0.0:8080:80", wantErr: "only binds on loopback"},
+		{name: "all interfaces 0.0.0.0 in bracket rejected", input: "[0.0.0.0]:8080:80", wantErr: "only binds on loopback"},
+		{name: "all interfaces ipv6 :: in bracket rejected", input: "[::]:8080:80", wantErr: "only binds on loopback"},
+		{name: "non-loopback ip rejected", input: "192.168.1.1:8080:80", wantErr: "only binds on loopback"},
+		{name: "non-loopback ip in bracket rejected", input: "[192.168.1.1]:8080:80", wantErr: "only binds on loopback"},
+		{name: "too many colon segments", input: "1:2:3:4", wantErr: "invalid port spec"},
+		{name: "unclosed bracket", input: "[::1:8080", wantErr: "missing closing bracket"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := ParsePublishFlag(tt.input)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("ParsePublishFlag(%q) expected error containing %q, got nil", tt.input, tt.wantErr)
+				}
+				if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+					t.Fatalf("ParsePublishFlag(%q) error %q does not contain %q", tt.input, err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParsePublishFlag(%q) unexpected error: %v", tt.input, err)
+			}
+			if spec.Guest != tt.wantGuest || spec.Host != tt.wantHost || spec.Dynamic != tt.wantDynamic {
+				t.Errorf("ParsePublishFlag(%q) = %+v, want Guest=%d, Host=%d, Dynamic=%v",
+					tt.input, spec, tt.wantGuest, tt.wantHost, tt.wantDynamic)
+			}
+		})
+	}
+}

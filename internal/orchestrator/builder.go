@@ -376,27 +376,9 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	}
 
 	if len(repo.Ports) > 0 {
-		resolved, err := portsfw.Resolve(repo.Ports, func() (*net.Listener, error) {
-			var lc net.ListenConfig
-			ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
-			if err != nil {
-				return nil, err
-			}
-			return &ln, nil
-		})
-		if err != nil {
-			for _, p := range resolved {
-				if p.Listener != nil {
-					_ = p.Listener.Close()
-				}
-			}
-			return Plan{}, nil, fmt.Errorf("resolve ports: %w", err)
+		if err := AddPortsToPlan(&plan, repo.Ports); err != nil {
+			return Plan{}, nil, err
 		}
-		plan.Ports = resolved
-		for k, v := range portsfw.PortEnv(resolved) {
-			plan.EnvSet[k] = v
-		}
-		plan.EnvSet[EnvPortsForward] = portsfw.FormatAllowed(resolved)
 	}
 
 	tasks := repo.DelegatedTasks
@@ -613,5 +595,39 @@ func resolveTemplates(r *config.Repo, tctx template.Context) error {
 		}
 		r.Env.Set[k] = rendered
 	}
+	return nil
+}
+
+// AddPortsToPlan resolves the given port specifications and attaches them
+// to the Plan, updating the environment allowlist (KEG_PORTS) and any
+// named port variables (KEG_PORT_<NAME>).
+func AddPortsToPlan(plan *Plan, specs []config.PortSpec) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	resolved, err := portsfw.Resolve(specs, func() (*net.Listener, error) {
+		var lc net.ListenConfig
+		ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, err
+		}
+		return &ln, nil
+	})
+	if err != nil {
+		for _, p := range resolved {
+			if p.Listener != nil {
+				_ = p.Listener.Close()
+			}
+		}
+		return fmt.Errorf("resolve ports: %w", err)
+	}
+	plan.Ports = append(plan.Ports, resolved...)
+	if plan.EnvSet == nil {
+		plan.EnvSet = make(map[string]string)
+	}
+	for k, v := range portsfw.PortEnv(resolved) {
+		plan.EnvSet[k] = v
+	}
+	plan.EnvSet[EnvPortsForward] = portsfw.FormatAllowed(plan.Ports)
 	return nil
 }

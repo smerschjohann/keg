@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
+
+	"github.com/urfave/cli/v3"
 )
 
 // TestMain isolates every test in this package from the developer's real
@@ -85,6 +88,47 @@ func TestCLI_GlobalFlagsDeclared(t *testing.T) {
 				}
 			}
 			t.Fatalf("global flag --%s not declared", tt.flag)
+		})
+	}
+}
+
+func TestCLI_RunFlagsDeclared(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		aliases []string
+	}{
+		{name: "publish flag with -p alias", flag: "publish", aliases: []string{"p"}},
+		{name: "env flag with -e alias", flag: "env", aliases: []string{"e"}},
+		{name: "name flag with -n alias", flag: "name", aliases: []string{"n"}},
+		{name: "ephemeral flag", flag: "ephemeral"},
+	}
+	cmd := NewCommand()
+	var runCmd *cli.Command
+	for _, c := range cmd.Commands {
+		if c.Name == "run" {
+			runCmd = c
+			break
+		}
+	}
+	if runCmd == nil {
+		t.Fatal("run command not found")
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, f := range runCmd.Flags {
+				names := f.Names()
+				if names[0] == tt.flag {
+					for _, wantAlias := range tt.aliases {
+						if !slices.Contains(names, wantAlias) {
+							t.Errorf("flag --%s missing alias %s (names: %v)", tt.flag, wantAlias, names)
+						}
+					}
+					return
+				}
+			}
+			t.Fatalf("run flag --%s not declared", tt.flag)
 		})
 	}
 }

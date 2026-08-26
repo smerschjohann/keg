@@ -56,6 +56,21 @@ func parseEnvFlag(entries []string) (map[string]string, []string, error) {
 	return set, inherit, nil
 }
 
+func parsePublishFlags(entries []string) ([]config.PortSpec, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	specs := make([]config.PortSpec, 0, len(entries))
+	for _, entry := range entries {
+		spec, err := config.ParsePublishFlag(entry)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
 var (
 	upstreamProxyFromEnv = orchestrator.UpstreamProxyFromEnv
 	firstHostNameserver  = orchestrator.FirstHostNameserver
@@ -104,21 +119,33 @@ func runAction(ctx context.Context, c *cliCommand) error {
 
 	instanceName := c.String("name")
 
+	cliSet, cliInherit, err := parseEnvFlag(c.StringSlice("env"))
+	if err != nil {
+		return err
+	}
+
+	cliPorts, err := parsePublishFlags(c.StringSlice("publish"))
+	if err != nil {
+		return err
+	}
+
 	plan, userCfg, err := orchestrator.BuildPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName, instanceName)
 	if err != nil {
 		return err
 	}
 
-	cliSet, cliInherit, err := parseEnvFlag(c.StringSlice("env"))
-	if err != nil {
-		return err
-	}
 	for k, v := range cliSet {
 		plan.EnvSet[k] = v
 	}
 	plan.EnvInherit = config.UnionStrings(plan.EnvInherit, cliInherit)
 	if c.Bool("inherit-all") {
 		plan.EnvInheritAll = true
+	}
+
+	if len(cliPorts) > 0 {
+		if err := orchestrator.AddPortsToPlan(&plan, cliPorts); err != nil {
+			return err
+		}
 	}
 
 	plan.Command = c.Args().Slice()
