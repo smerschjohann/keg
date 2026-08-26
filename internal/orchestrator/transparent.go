@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"golang.ngrok.com/muxado"
 )
@@ -94,6 +95,11 @@ func containsInt(list []int, v int) bool {
 	return false
 }
 
+// sniffTimeout bounds the wait for the first peer bytes. Regular clients
+// send immediately; the timeout only lets server-first raw protocols
+// (peer waits for us) proceed instead of deadlocking the peek.
+const sniffTimeout = 2 * time.Second
+
 func startTransparentRelay(file *os.File) error {
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", transparentListenAddr)
@@ -101,50 +107,83 @@ func startTransparentRelay(file *os.File) error {
 		return fmt.Errorf("listen %s: %w", transparentListenAddr, err)
 	}
 	sess := muxado.Client(file, nil)
-	go func() { _ = serveTransparent(ln, sess) }()
+	go func() { _ = serveTransparent(ln, sess, originalDest) }()
 	return nil
 }
 
-// serveTransparent accepts redirected connections, extracts the SNI and
-// proxies via CONNECT over the channel; non-TLS or SNI-less connections are
-// closed immediately (fail-closed).
-func serveTransparent(ln net.Listener, sess muxado.Session) error {
+// serveTransparent accepts redirected connections and dispatches them:
+// TLS ClientHellos are spliced by SNI hostname (name policy), every other
+// stream is passed through as raw TCP to its pre-NAT destination
+// (IP/port policy via the DNS correlation table). Both decisions happen
+// host-side over the channel; the stage itself holds no policy. origDst
+// recovers the pre-NAT destination and is injected for tests (no conntrack
+// outside a real redirect environment).
+func serveTransparent(ln net.Listener, sess muxado.Session, origDst func(net.Conn) (net.IP, int, bool)) error {
 	for {
 		conn, aerr := ln.Accept()
 		if aerr != nil {
 			return aerr // stage shutdown: listener closed
 		}
-		go handleTransparent(conn, sess)
+		go handleTransparent(conn, sess, origDst)
 	}
 }
 
-func handleTransparent(conn net.Conn, sess muxado.Session) {
+func handleTransparent(conn net.Conn, sess muxado.Session, origDst func(net.Conn) (net.IP, int, bool)) {
 	defer func() { _ = conn.Close() }() // relay connection lifecycle
+
+	dstIP, dstPort, hasDst := origDst(conn)
+
 	buf := make([]byte, 16384)
-	total := 0
-	for {
-		n, err := conn.Read(buf[total:])
-		total += n
-		if sni, ok := ParseSNI(buf[:total]); ok {
-			relayCONNECT(conn, sess, sni, buf[:total])
-			return
-		}
-		if err != nil || total == len(buf) {
-			return // no ClientHello within budget: fail-closed
+	_ = conn.SetReadDeadline(time.Now().Add(sniffTimeout))
+	n, rerr := conn.Read(buf)
+	_ = conn.SetReadDeadline(time.Time{})
+	if n == 0 {
+		return // EOF or sniff timeout with no data: nothing to route
+	}
+
+	if buf[0] == 0x16 {
+		// TLS: accumulate until the ClientHello parses. Anything else —
+		// including future ECH hellos without cleartext SNI — is closed
+		// (fail-closed); never falls through to the raw path.
+		total := n
+		for {
+			if sni, ok := ParseSNI(buf[:total]); ok {
+				port := 443
+				if hasDst {
+					port = dstPort
+				}
+				relayCONNECT(conn, sess, sni, port, buf[:total])
+				return
+			}
+			if rerr != nil || total == len(buf) {
+				return // no parseable hello within budget: fail-closed
+			}
+			var n int
+			n, rerr = conn.Read(buf[total:])
+			total += n
 		}
 	}
+
+	// Raw TCP passthrough: only with a known pre-NAT destination — the
+	// host-side correlation check is meaningless otherwise.
+	if !hasDst {
+		return
+	}
+	relayCONNECT(conn, sess, dstIP.String(), dstPort, buf[:n])
 }
 
-// relayCONNECT speaks one CONNECT for the SNI host over the channel and then
-// splices bytes bidirectionally.
-func relayCONNECT(conn net.Conn, sess muxado.Session, sni string, prefix []byte) {
+// relayCONNECT speaks one CONNECT for "host:port" over the channel and then
+// splices bytes bidirectionally, replaying prefix (the already-peeked
+// payload) after the tunnel opens. Policy (whitelist / correlation) is
+// applied host-side before the 200 is ever seen here.
+func relayCONNECT(conn net.Conn, sess muxado.Session, host string, port int, prefix []byte) {
 	stream, err := sess.Open()
 	if err != nil {
 		return
 	}
 	defer func() { _ = stream.Close() }() // relay stream lifecycle
-	req := fmt.Sprintf("CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n", sni, sni)
-	if _, err := stream.Write([]byte(req)); err != nil {
+	req := fmt.Sprintf("CONNECT %s:%d HTTP/1.1\r\nHost: %s:%d\r\n\r\n", host, port, host, port)
+	if _, err := io.WriteString(stream, req); err != nil {
 		return
 	}
 	status := make([]byte, 512)
@@ -152,8 +191,10 @@ func relayCONNECT(conn net.Conn, sess muxado.Session, sni string, prefix []byte)
 	if err != nil || n < 12 || status[9] != '2' { // "HTTP/1.1 2xx"
 		return
 	}
-	if _, err := stream.Write(prefix); err != nil {
-		return
+	if len(prefix) > 0 {
+		if _, err := stream.Write(prefix); err != nil {
+			return
+		}
 	}
 	done := make(chan struct{}, 2)
 	go func() { _, _ = io.Copy(conn, stream); done <- struct{}{} }()
