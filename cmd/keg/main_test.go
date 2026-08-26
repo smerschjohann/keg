@@ -2,11 +2,36 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smerschjohann/keg/internal/orchestrator"
 )
+
+// TestMain isolates every test in this package from the developer's real
+// machine user config (~/.config/keg/config.yaml). Tests that omit an
+// explicit --user-config rely on BuildPlan's defaults-only behavior; without
+// redirecting XDG_CONFIG_HOME a developer-local agy config (Google SNI/DNS
+// domains, mounts, secrets) would leak into otherwise-plain plans and flip
+// them into configured sandboxes, making results machine-dependent.
+func TestMain(m *testing.M) {
+	if orchestrator.InitGuestDispatch() {
+		return
+	}
+	dir, err := os.MkdirTemp("", "keg-test-userconfig")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain: create temp user config dir:", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", dir); err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain: set XDG_CONFIG_HOME:", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
 
 // runCLI executes the root command with the given arguments, mirroring an
 // actual CLI invocation without spawning a process.
