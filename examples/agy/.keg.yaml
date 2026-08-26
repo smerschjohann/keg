@@ -12,19 +12,30 @@ mounts:
     mode: ro
 
 # Zero-trust network in transparent mode (no HTTP proxy):
-# - DNS upstream: 8.8.8.8:53 forwarding googleapis.com
-# - Endpoints: daily-cloudcode-pa.googleapis.com, oauth2.googleapis.com (*.googleapis.com)
+# - DNS: resolves googleapis.com & static hosts
+# - Endpoints: daily-cloudcode-pa.googleapis.com, oauth2.googleapis.com, *.googleapis.com
 network:
   mode: transparent
   dns:
     enabled: true
-    upstream: 8.8.8.8:53
+    hosts:
+      lh3.googleusercontent.com: 172.217.113.4
+      accounts.google.com: 172.217.113.4
   sni_domains:
     - daily-cloudcode-pa.googleapis.com
     - oauth2.googleapis.com
     - "*.googleapis.com"
+    - "*.googleusercontent.com"
+    - "*.gstatic.com"
+    - accounts.google.com
   tcp_endpoints:
     - host: daily-cloudcode-pa.googleapis.com
       ports: [443]
     - host: oauth2.googleapis.com
+      ports: [443]
+    - host: www.googleapis.com
+      ports: [443]
+    - host: lh3.googleusercontent.com
+      ports: [443]
+    - host: accounts.google.com
       ports: [443]
