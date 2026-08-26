@@ -36,6 +36,15 @@ type waitResult struct {
 // all mounts before executing the command, so early exits surface mount
 // errors here rather than in Wait.
 func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
+	// Route the workload through the reexec guest unless the caller pinned
+	// a binary path (tests inject stubs). /proc/self/exe is stable across
+	// binary replacement (moby/sys/reexec Self semantics).
+	if p.SelfExe == "" {
+		if exe, err := os.Readlink("/proc/self/exe"); err == nil {
+			p.SelfExe = exe
+		}
+	}
+
 	bin := p.BwrapPath
 	if bin == "" {
 		resolved, err := exec.LookPath("bwrap")

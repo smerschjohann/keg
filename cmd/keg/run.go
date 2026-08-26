@@ -64,9 +64,13 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		BwrapArgs:   repo.BwrapArgs,
 		AllowWeakBwrap: effective.Security.AllowWeakBwrap != nil &&
 			*effective.Security.AllowWeakBwrap,
-		Overlay: overlay,
+		Overlay:         overlay,
+		EgressWhitelist: repo.Network.AllowedDomains,
 	}
 	for k, v := range repo.Env.Set {
+		plan.EnvSet[k] = v
+	}
+	for k, v := range orchestrator.ProxyEnv(repo.Network.AllowedDomains) {
 		plan.EnvSet[k] = v
 	}
 
@@ -167,10 +171,48 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		}
 	}()
 
+	// Serve egress channel A while the sandbox runs; closing the sandbox
+	// tears the session down (THREAT_MODEL §8.1: only controlled channels).
+	if len(plan.EgressWhitelist) > 0 {
+		err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
+			Whitelist:     plan.EgressWhitelist,
+			UpstreamProxy: upstreamProxyFromEnv(os.Getenv),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "keg: egress proxy: %v\n", err)
+		}
+	}
+
 	code, err := sb.Wait()
 	if err != nil {
 		return err
 	}
 	os.Exit(code)
 	return nil
+}
+
+// upstreamProxyFromEnv picks the restrictive corporate proxy from the HOST
+// environment (CONCEPT.md §4.2: allowed targets dial via upstream, the
+// rest never leave the whitelist). Returns "host:port" or "" for direct.
+func upstreamProxyFromEnv(getenv func(string) string) string {
+	for _, k := range []string{
+		"HTTPS_PROXY", "https_proxy",
+		"HTTP_PROXY", "http_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		if v := getenv(k); v != "" {
+			return stripProxyScheme(v)
+		}
+	}
+	return ""
+}
+
+// stripProxyScheme removes a leading http(s):// so net.Dial accepts it.
+func stripProxyScheme(v string) string {
+	for _, p := range []string{"http://", "https://"} {
+		if len(v) >= len(p) && v[:len(p)] == p {
+			return v[len(p):]
+		}
+	}
+	return v
 }

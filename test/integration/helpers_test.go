@@ -34,8 +34,23 @@ func findBwrap(t *testing.T) {
 // and returns captured output plus exit code.
 func runInSandbox(t *testing.T, dir string, overlay orchestrator.Overlay, script string) (string, int) {
 	t.Helper()
+	return runInSandboxWithConfig(t, dir, repoConfig, overlay, script, nil, nil)
+}
+
+// runInSandboxWithConfig launches with a custom repo config; hooks mirror
+// the production wiring points: prepare mutates the Plan before launch
+// (env injection like buildRunPlan), postLaunch serves channels afterwards.
+func runInSandboxWithConfig(
+	t *testing.T,
+	dir, cfgContent string,
+	overlay orchestrator.Overlay,
+	script string,
+	prepare func(plan *orchestrator.Plan),
+	postLaunch func(sb *orchestrator.Sandbox),
+) (string, int) {
+	t.Helper()
 	findBwrap(t)
-	if err := os.WriteFile(filepath.Join(dir, ".keg.yaml"), []byte(repoConfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".keg.yaml"), []byte(cfgContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	tmpDir := t.TempDir()
@@ -47,12 +62,18 @@ func runInSandbox(t *testing.T, dir string, overlay orchestrator.Overlay, script
 	}
 	plan.Stdout = &out
 	plan.Stderr = &out
+	if prepare != nil {
+		prepare(&plan)
+	}
 
 	sb, err := orchestrator.Launch(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 	defer sb.Close()
+	if postLaunch != nil {
+		postLaunch(sb)
+	}
 	code, err := sb.Wait()
 	if err != nil {
 		t.Fatalf("wait: %v", err)

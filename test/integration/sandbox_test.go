@@ -84,7 +84,7 @@ echo "MARKER:$SANDBOX_MARKER"
 	}
 }
 
-// TestInvariant_OnlyPlannedFDsInherit verifies the complete FD contract
+// TestInvariant_WorkloadGetsOnlyStdioFDs verifies the complete FD contract
 // inside the sandbox: exactly fds 0-2 (stdio) plus the channel ends 3-5 as
 // socketpair sockets — nothing else. Foreign host descriptors are marked
 // close-on-exec before start (THREAT_MODEL §5.1), so any extra entry here
@@ -105,35 +105,18 @@ func TestInvariant_OnlyPlannedFDsInherit(t *testing.T) {
 		}
 	}
 
-	channelInodes := map[string]bool{} // inode -> true, from fds 3..5
+	// Resident-guest model (WP-M2): the workload child inherits exactly
+	// stdio. The channel sockets stay exclusive to the resident guest
+	// process — strictly stronger than the old "stdio + channels" contract,
+	// because the workload cannot touch channel fds directly at all.
 	for _, fd := range []string{"0", "1", "2"} {
 		if _, ok := fds[fd]; !ok {
 			t.Errorf("std fd %s missing:\n%s", fd, out)
 		}
 		delete(fds, fd)
 	}
-	for _, fd := range []string{"3", "4", "5"} {
-		target, ok := fds[fd]
-		if !ok {
-			t.Errorf("channel fd %s missing:\n%s", fd, out)
-			continue
-		}
-		delete(fds, fd)
-		inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
-		channelInodes[inode] = true
-		if !strings.HasPrefix(target, "socket:[") {
-			t.Errorf("fd %s = %q, want a socketpair end\n%s", fd, target, out)
-		}
-	}
-	// Anything left must be a duplicate of a channel socket (bwrap's own
-	// setup dups the preserved ends); any file, pipe or other socket here
-	// is a leak that escaped both the host-side CLOEXEC scrub and the
-	// guest-side close sweep.
 	for fd, target := range fds {
-		inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
-		if !strings.HasPrefix(target, "socket:[") || !channelInodes[inode] {
-			t.Errorf("foreign fd %s leaked into sandbox (%s):\n%s", fd, target, out)
-		}
+		t.Errorf("foreign fd %s leaked into workload (%s):\n%s", fd, target, out)
 	}
 }
 

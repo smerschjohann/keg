@@ -29,6 +29,19 @@ func init() {
 	reexec.Register(GuestCommandName, guestMain)
 }
 
+// guestArgs returns the workload argv for the two supported entrypoint
+// shapes: classic reexec (argv[0] = guest name) and the bwrap-bound binary
+// (argv[1] = guest name). ok=false when no guest dispatch is present.
+func guestArgs() ([]string, bool) {
+	if len(os.Args) > 1 && os.Args[0] == GuestCommandName {
+		return os.Args[1:], true
+	}
+	if len(os.Args) > 2 && os.Args[1] == GuestCommandName {
+		return os.Args[2:], true
+	}
+	return nil, false
+}
+
 // guestMain is the sandbox-side entrypoint (CODE_KEG=1 invocation).
 // Unlike the host process it stays RESIDENT: channel bridges must serve
 // requests while the workload runs. It therefore starts the bridges per the
@@ -38,13 +51,33 @@ func init() {
 // FD contract: fd 3 = proxy channel, fd 4 = DNS, fd 5 = runner
 // (see FDProxy/FDDNS/FDRunner).
 func guestMain() {
+	prepareGuestProcess()
+
+	// Channel bridges live for the whole resident lifetime; they must be
+	// started here (NOT in a helper with its own defer) so they survive
+	// until the workload exits.
+	stopBridges := startConfiguredBridges()
+	defer stopBridges()
+
+	argv, ok := guestArgs()
+	if !ok {
+		fmt.Fprintln(os.Stderr, "keg guest: no command given")
+		os.Exit(127)
+	}
+	code := runGuestCommand(argv)
+	os.Exit(code)
+}
+
+// prepareGuestProcess applies env hygiene before anything else runs.
+func prepareGuestProcess() {
 	_ = os.Setenv("CODE_KEG", "1") // best effort; nothing depends on failure modes
 
-	// Defense-in-depth against inherited descriptors (bwrap passes unknown
-	// fds through, and its own setup may leave duplicates of our channel
-	// sockets behind): keep only stdio and the channel ends.
-	if err := CloseAllFDsExcept(0, 1, 2, FDProxy, FDDNS, FDRunner); err != nil {
-		fmt.Fprintf(os.Stderr, "keg guest: fd cleanup: %v\n", err)
+	// Unlike hard-closing, CLOEXEC marking cannot disturb runtime-internal
+	// descriptors (the full keg binary owns netpoll fds by now), while
+	// still guaranteeing the workload child inherits exactly stdio — the
+	// channel sockets stay exclusive to this resident process.
+	if err := ScrubForeignFDs(map[int]bool{}); err != nil {
+		fmt.Fprintf(os.Stderr, "keg guest: fd scrub: %v\n", err)
 	}
 
 	// Defense-in-depth env hygiene: even if bwrap-side stripping were
@@ -53,12 +86,11 @@ func guestMain() {
 		_ = os.Unsetenv(name)
 	}
 
-	// Channel bridges; each owns its listener and dies with the session.
-	stopBridges := startConfiguredBridges()
-	defer stopBridges()
-
-	code := runGuestCommand(os.Args[1:])
-	os.Exit(code)
+	// Re-apply the orchestrator's egress config on top of the stripped
+	// environment: the KEG_PROXY marker is the single source of truth,
+	// so injected proxy variables survive hygiene while any host proxy
+	// values stay gone.
+	applyProxyEnv()
 }
 
 // startConfiguredBridges starts every guest-side bridge requested by env
@@ -164,4 +196,34 @@ func runGuestCommand(argv []string) int {
 		return 127
 	}
 	return 128 + int(ws.Signal())
+}
+
+// InitGuestDispatch is the single reentry gate for keg binaries: it
+// handles both classic reexec (argv[0] = guest name) and the bwrap-bound
+// dispatch (argv[1] = guest name, see BuildArgs). Returns true when this
+// process IS a sandbox guest and never returns from it.
+func InitGuestDispatch() bool {
+	if len(os.Args) > 1 && os.Args[1] == GuestCommandName {
+		guestMain()
+		return true
+	}
+	return reexec.Init()
+}
+
+// RunGuest exposes the sandbox entrypoint to cmd/keg main.
+func RunGuest() { guestMain() }
+
+// applyProxyEnv derives the proxy variables from the bridge marker. Values
+// point exclusively at loopback (TestInvariant_ProxyEnvNeverPointsOffLoopback).
+func applyProxyEnv() {
+	addr := os.Getenv(EnvProxyBridge)
+	if addr == "" || addr == "0" {
+		return
+	}
+	url := "http://" + addr
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		_ = os.Setenv(name, url)
+	}
+	_ = os.Setenv("NO_PROXY", "localhost,127.0.0.1")
+	_ = os.Setenv("no_proxy", "localhost,127.0.0.1")
 }

@@ -199,3 +199,25 @@ func TestStartProxyBridge(t *testing.T) {
 		t.Fatal("payload never reached the host-side session")
 	}
 }
+
+// TestGuest_ReappliesProxyEnv proves the guest derives its proxy variables
+// from the KEG_PROXY marker AFTER stripping host credentials: injected
+// egress config survives hygiene while host proxies never do.
+func TestGuest_ReappliesProxyEnv(t *testing.T) {
+	cmd := reexec.Command(GuestCommandName, "/bin/sh", "-c",
+		`printf "%s|%s" "$HTTP_PROXY" "$NO_PROXY"`)
+	cmd.Env = append(os.Environ(),
+		"HTTP_PROXY=http://host-leak:9999", // must NOT survive
+		EnvProxyBridge+"=127.0.0.1:18081",
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("guest run: %v; %s", err, out.String())
+	}
+	got := out.String()
+	if got != "http://127.0.0.1:18081|localhost,127.0.0.1" {
+		t.Errorf("guest proxy env = %q", got)
+	}
+}

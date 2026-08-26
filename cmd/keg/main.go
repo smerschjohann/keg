@@ -8,7 +8,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/moby/sys/reexec"
+	"github.com/smerschjohann/keg/internal/orchestrator"
+
 	"github.com/urfave/cli/v3"
 )
 
@@ -97,9 +98,8 @@ func NewCommand() *cli.Command {
 }
 
 func main() {
-	// Reentrant entrypoint: inside the sandbox this binary is re-executed
-	// under the guest name; Init returns true there and runs the guest.
-	if reexec.Init() {
+	// Reentrant entrypoints (classic reexec + bwrap-bound guest routing):
+	if orchestrator.InitGuestDispatch() {
 		return
 	}
 	if err := NewCommand().Run(context.Background(), os.Args); err != nil {

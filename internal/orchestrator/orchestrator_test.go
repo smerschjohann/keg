@@ -400,3 +400,41 @@ func TestIsOverlayBusy(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildArgs_GuestEntrypointRouting pins the M2 wiring: when the plan
+// carries the keg binary path, the sandbox command routes through the
+// reexec'd guest (bound read-only into the sandbox), so bridges, env
+// hygiene and exit-code mapping apply to every workload.
+func TestBuildArgs_GuestEntrypointRouting(t *testing.T) {
+	p := basePlan()
+	p.SelfExe = "/opt/keg/keg"
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	joined := strings.Join(args, "\x00")
+	if !strings.Contains(joined, "--tmpfs\x00/.keg") {
+		t.Errorf("guest staging dir missing:\n%s", joined)
+	}
+	if !strings.Contains(joined, "--ro-bind\x00/opt/keg/keg\x00/.keg/keg") {
+		t.Errorf("self bind missing:\n%s", joined)
+	}
+	tail := args[len(args)-3:]
+	wantTail := []string{"/.keg/keg", GuestCommandName, "/bin/bash"}
+	for i, w := range wantTail {
+		if tail[i] != w {
+			t.Fatalf("command tail = %v, want %v", tail, wantTail)
+		}
+	}
+}
+
+// Without SelfExe the command stays verbatim (used by focused tests).
+func TestBuildArgs_NoSelfExeKeepsCommandVerbatim(t *testing.T) {
+	args, err := BuildArgs(basePlan())
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	if tail := args[len(args)-1:]; tail[0] != "/bin/bash" {
+		t.Fatalf("last arg = %q, want plain /bin/bash", tail[0])
+	}
+}

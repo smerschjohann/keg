@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/orchestrator"
 )
 
@@ -65,6 +66,44 @@ func TestBuildRunPlan_Minimal(t *testing.T) {
 	}
 	if len(plan.Command) != 0 {
 		t.Errorf("Command must be filled by caller, got %v", plan.Command)
+	}
+}
+
+func TestBuildRunPlan_ProxyEnvInjected(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	// The fixture declares allowed_domains: the plan must carry the full
+	// loopback proxy environment plus the whitelist for the host server.
+	if got := plan.EnvSet[orchestrator.EnvProxyBridge]; got != proxy.DefaultBridgeAddr {
+		t.Errorf("EnvSet[%s] = %q, want %q", orchestrator.EnvProxyBridge, got, proxy.DefaultBridgeAddr)
+	}
+	url := "http://" + proxy.DefaultBridgeAddr
+	if plan.EnvSet["HTTPS_PROXY"] != url {
+		t.Errorf("EnvSet[HTTPS_PROXY] = %q, want %q", plan.EnvSet["HTTPS_PROXY"], url)
+	}
+	if strings.Join(plan.EgressWhitelist, ",") != "proxy.golang.org" {
+		t.Errorf("EgressWhitelist = %v, want [proxy.golang.org]", plan.EgressWhitelist)
+	}
+}
+
+func TestBuildRunPlan_NoWhitelistNoProxyEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\n")
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if _, ok := plan.EnvSet[orchestrator.EnvProxyBridge]; ok {
+		t.Errorf("proxy marker set without whitelist: %v", plan.EnvSet)
+	}
+	if len(plan.EgressWhitelist) != 0 {
+		t.Errorf("EgressWhitelist = %v, want empty", plan.EgressWhitelist)
 	}
 }
 
@@ -136,5 +175,40 @@ func TestBuildRunPlan_VarsFromEnvOverride(t *testing.T) {
 	// (templates land in WP-M4); assert no error and document intent.
 	if _, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, ""); err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
+	}
+}
+
+func TestUpstreamProxyFromEnv(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"no proxy env yields empty", nil, ""},
+		{
+			name: "https proxy wins over http",
+			env:  map[string]string{"HTTP_PROXY": "http://a:1", "HTTPS_PROXY": "http://b:2"},
+			want: "b:2",
+		},
+		{
+			name: "lowercase fallback",
+			env:  map[string]string{"https_proxy": "http://c:3"},
+			want: "c:3",
+		},
+		{
+			name: "scheme is stripped for dialing",
+			env:  map[string]string{"HTTPS_PROXY": "http://corp:3128"},
+			want: "corp:3128",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			getenv := func(k string) string { return tt.env[k] }
+			if got := upstreamProxyFromEnv(getenv); got != tt.want {
+				t.Fatalf("upstreamProxyFromEnv() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

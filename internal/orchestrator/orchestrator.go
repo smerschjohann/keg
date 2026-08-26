@@ -95,6 +95,15 @@ type Plan struct {
 	DiskLayerRW   string // host dir with upper layer (OverlayDisk)
 	DiskLayerWork string // host dir with work layer (OverlayDisk)
 
+	// EgressWhitelist carries the repo's network.allowed_domains for the
+	// host-side proxy server; empty disables channel A entirely.
+	EgressWhitelist []string
+	// SelfExe is the host path of this binary. When set (Launch resolves it
+	// automatically), BuildArgs routes the workload through the reexec'd
+	// guest entrypoint: binds the binary read-only into the sandbox and
+	// prefixes the command with the guest dispatch name.
+	SelfExe string
+
 	Command []string // command to exec after `--`
 }
 
@@ -235,11 +244,24 @@ func BuildArgs(p Plan) ([]string, error) {
 	args = append(args, "--setenv", "PATH",
 		p.RepoRoot+"/.cache/bin:"+p.SandboxHome+"/.local/bin:/usr/local/bin:/usr/bin:/bin")
 
+	// Guest entrypoint staging: the sandbox has no host paths, so the
+	// keg binary is bound into a fresh tmpfs dir and executed there;
+	// its argv[1] dispatches to guestMain (see cmd/keg main).
+	if p.SelfExe != "" {
+		args = append(args,
+			"--tmpfs", "/.keg",
+			"--ro-bind", p.SelfExe, "/.keg/keg",
+		)
+	}
+
 	// Raw extra args last: they can add to, not reliably retract, derived
 	// arguments (weak ones gated above).
 	args = append(args, p.BwrapArgs...)
 
 	args = append(args, "--")
+	if p.SelfExe != "" {
+		args = append(args, "/.keg/keg", GuestCommandName)
+	}
 	args = append(args, p.Command...)
 	return args, nil
 }
