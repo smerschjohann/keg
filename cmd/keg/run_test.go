@@ -479,3 +479,31 @@ func TestBuildRunPlan_NoPortsNoMarker(t *testing.T) {
 		t.Errorf("%s set without declared ports (deny-by-default violated)", orchestrator.EnvPortsForward)
 	}
 }
+
+func TestBuildRunPlan_GoTemplate(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+templates:
+  - go
+env:
+  set:
+    GOCACHE: /explicit-wins
+`)
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+
+	// Template env applied; explicit repo env.set wins over template
+	// defaults (additive building block semantics).
+	if plan.EnvSet["GOTOOLCHAIN"] != "local" {
+		t.Errorf("GOTOOLCHAIN = %q, want local", plan.EnvSet["GOTOOLCHAIN"])
+	}
+	if got := plan.EnvSet["GOCACHE"]; got != "/explicit-wins" {
+		t.Errorf("GOCACHE = %q, want explicit repo value to win", got)
+	}
+	if plan.EnvSet["GOMODCACHE"] != "/home/sandbox/.cache/go/mod" {
+		t.Errorf("GOMODCACHE = %q", plan.EnvSet["GOMODCACHE"])
+	}
+}

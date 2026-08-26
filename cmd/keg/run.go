@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,36 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	}
 	for k, v := range repo.Env.Set {
 		plan.EnvSet[k] = v
+	}
+
+	// Language templates (CONCEPT.md §4.6) are additive building blocks:
+	// their env defaults go in first so explicit repo env.set values win;
+	// cache mounts join the user mounts (tilde sources are expanded by
+	// BuildArgs' caller like any other mount).
+	if len(repo.Templates) > 0 {
+		tc := config.DetectToolchainPaths(exec.LookPath, config.HostGoEnv)
+		tplMounts, tplEnv, terr := config.ExpandTemplates(repo.Templates, plan.SandboxHome, tc)
+		if terr != nil {
+			return orchestrator.Plan{}, fmt.Errorf("templates: %w", terr)
+		}
+		for _, m := range tplMounts {
+			src := m.Src
+			if expanded, expErr := config.ExpandPath(src); expErr == nil {
+				src = expanded
+			}
+			plan.Mounts = append(plan.Mounts, config.Mount{Src: src, Dest: m.Dest, Mode: m.Mode})
+		}
+		for k, v := range tplEnv {
+			if _, exists := plan.EnvSet[k]; !exists {
+				plan.EnvSet[k] = v
+			}
+		}
+		// GOROOT outside /usr is invisible to the sandbox — ro-bind it at
+		// its own path and put the toolchain binaries on PATH.
+		if tc.GoRootNeedsBind() {
+			plan.Mounts = append(plan.Mounts, config.Mount{Src: tc.GoRoot, Dest: tc.GoRoot, Mode: config.MountRO})
+			plan.ExtraPathDirs = []string{tc.GoRoot + "/bin"}
+		}
 	}
 	// Explicit-proxy vars only make sense in proxy mode; transparent mode
 	// intercepts at the network layer instead.

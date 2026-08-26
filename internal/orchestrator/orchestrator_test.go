@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -440,5 +441,24 @@ func TestBuildArgs_NoSelfExeKeepsCommandVerbatim(t *testing.T) {
 	}
 	if tail := args[len(args)-1:]; tail[0] != "/bin/bash" {
 		t.Fatalf("last arg = %q, want plain /bin/bash", tail[0])
+	}
+}
+
+// TestBuildArgs_ExtraPathDirs puts toolchain binaries (e.g. GOROOT/bin)
+// ahead of the default PATH when a template binds a toolchain outside the
+// always-bound /usr tree.
+func TestBuildArgs_ExtraPathDirs(t *testing.T) {
+	var p Plan
+	p.RepoRoot = "/repo"
+	p.SandboxHome = "/home/sandbox"
+	p.ExtraPathDirs = []string{"/usr/local/go/bin"}
+
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	want := "/usr/local/go/bin:/repo/.cache/bin:/home/sandbox/.local/bin:/usr/local/bin:/usr/bin:/bin"
+	if !containsPair(args, "--setenv", "PATH") || !slices.Contains(args, want) {
+		t.Errorf("PATH not extended correctly:\n%s", strings.Join(args, "\n"))
 	}
 }

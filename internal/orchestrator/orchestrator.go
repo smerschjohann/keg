@@ -120,6 +120,9 @@ type Plan struct {
 	// Ports carries the resolved port back-channel entries (Kanal E);
 	// dynamic entries hold their pre-bound host listener.
 	Ports []portsfw.ResolvedPort
+	// ExtraPathDirs are prepended to the sandbox PATH (e.g. GOROOT/bin for
+	// toolchains bound outside /usr).
+	ExtraPathDirs []string
 
 	Command []string // command to exec after `--`
 }
@@ -276,10 +279,14 @@ func BuildArgs(p Plan) ([]string, error) {
 		"--setenv", "TMPDIR", "/tmp",
 		"--setenv", "SHELL", "/bin/bash",
 	)
-	// PATH mirrors the proven sandbox: repo-local tools first, then the
-	// sandbox home, then the system (all absolute so they resolve inside).
-	args = append(args, "--setenv", "PATH",
-		p.RepoRoot+"/.cache/bin:"+p.SandboxHome+"/.local/bin:/usr/local/bin:/usr/bin:/bin")
+	// PATH mirrors the proven sandbox: toolchain dirs first, then repo-
+	// local tools, then the sandbox home and the system (all absolute so
+	// they resolve inside).
+	path := p.RepoRoot + "/.cache/bin:" + p.SandboxHome + "/.local/bin:/usr/local/bin:/usr/bin:/bin"
+	for _, dir := range slices.Backward(p.ExtraPathDirs) {
+		path = dir + ":" + path
+	}
+	args = append(args, "--setenv", "PATH", path)
 
 	// Guest entrypoint staging: the sandbox has no host paths, so the
 	// keg binary is bound into a fresh tmpfs dir and executed there;
