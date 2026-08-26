@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/smerschjohann/keg/internal/egress/proxy"
+	"github.com/smerschjohann/keg/internal/portsfw"
 
 	"github.com/moby/sys/reexec"
 	"golang.ngrok.com/muxado"
@@ -20,6 +21,12 @@ import (
 // is the loopback address for the guest bridge (set via bwrap --setenv by
 // the orchestrator when the repo whitelist is non-empty).
 const EnvProxyBridge = "KEG_PROXY"
+
+// EnvPortsForward marks a live port back-channel on fd FDPorts. Its value
+// is the comma-separated allowlist of guest target ports — the guest
+// forwarder refuses every target outside it (THREAT_MODEL §5.8,
+// deny-by-default).
+const EnvPortsForward = "KEG_PORTS"
 
 // GuestCommandName is the reexec name under which the sandbox entrypoint
 // runs (second invocation of the same binary inside bwrap).
@@ -48,8 +55,8 @@ func guestArgs() ([]string, bool) {
 // orchestrator's env markers, spawns the requested command as a child,
 // forwards termination signals to it, and mirrors its exit code.
 //
-// FD contract: fd 3 = proxy channel, fd 4 = DNS, fd 5 = runner
-// (see FDProxy/FDDNS/FDRunner).
+// FD contract: fd 3 = proxy channel, fd 4 = DNS, fd 5 = runner,
+// fd 6 = port back-channel (see FDProxy/FDDNS/FDRunner/FDPorts).
 func guestMain() {
 	prepareGuestProcess()
 
@@ -100,10 +107,40 @@ func startConfiguredBridges() func() {
 	if addr := os.Getenv(EnvProxyBridge); addr != "" && addr != "0" {
 		stops = append(stops, startProxyBridgeFromFD(FDProxy, addr))
 	}
+	if marker := os.Getenv(EnvPortsForward); marker != "" {
+		stops = append(stops, startPortForwarderFromFD(FDPorts, marker))
+	}
 	return func() {
 		for _, stop := range stops {
 			stop()
 		}
+	}
+}
+
+// startPortForwarderFromFD serves the guest end of the port back-channel:
+// each host-initiated stream names its sandbox loopback target; targets
+// outside the declared marker are closed without dialing (fail-closed).
+func startPortForwarderFromFD(fd int, allowedMarker string) func() {
+	allowed, err := portsfw.ParseAllowed(allowedMarker)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "keg guest: %v\n", err)
+		return func() {}
+	}
+	file := os.NewFile(uintptr(fd), "keg-ports-channel")
+	if file == nil {
+		fmt.Fprintf(os.Stderr, "keg guest: ports channel fd %d missing\n", fd)
+		return func() {}
+	}
+	sess := muxado.Client(file, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = portsfw.ServeGuest(ctx, sess, allowed, nil)
+	}()
+	return func() {
+		cancel() // closes the session first, then unwinds ServeGuest
+		<-done
 	}
 }
 

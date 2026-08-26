@@ -100,11 +100,11 @@ func netnsStageMain() {
 	}
 	// All privileged setup is done; bwrap refuses unexpected capabilities,
 	// and the sandbox does not need them.
-	// Channel ends arrive at fds 3..5 (parent's ExtraFiles). Wrap each fd
+	// Channel ends arrive at fds 3..6 (parent's ExtraFiles). Wrap each fd
 	// exactly once — every consumer shares these handles so the poller sees
 	// a single registration per descriptor.
 	channelFiles := make([]*os.File, FDPreserved)
-	for i, fd := range []int{FDProxy, FDDNS, FDRunner} {
+	for i, fd := range []int{FDProxy, FDDNS, FDRunner, FDPorts} {
 		channelFiles[i] = os.NewFile(uintptr(fd), fmt.Sprintf("channel-%d", i))
 	}
 

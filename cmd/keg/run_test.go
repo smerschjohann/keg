@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -408,5 +410,72 @@ network:
 	}
 	if len(plan.TCPEndpoints) != 1 || plan.TCPEndpoints[0].Host != "registry-1.docker.io" {
 		t.Errorf("TCPEndpoints = %+v", plan.TCPEndpoints)
+	}
+}
+
+func TestBuildRunPlan_PortsBackChannel(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+ports:
+  - name: dev-server
+    port: 8080
+    dynamic: true
+  - "5432:15432"
+`)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+
+	if len(plan.Ports) != 2 {
+		t.Fatalf("plan.Ports = %d entries, want 2 (%+v)", len(plan.Ports), plan.Ports)
+	}
+	dyn, stat := plan.Ports[0], plan.Ports[1]
+
+	// Dynamic entry: host port allocated (≠ guest port is NOT required,
+	// but it must be a real reservation with a bound listener).
+	if dyn.Name != "dev-server" || dyn.Guest != 8080 {
+		t.Errorf("dynamic entry = %+v, want dev-server/guest 8080", dyn)
+	}
+	if dyn.HostPort == 0 {
+		t.Error("dynamic entry has no allocated host port")
+	}
+	if dyn.Listener == nil {
+		t.Error("dynamic entry must carry its pre-bound listener (the reservation)")
+	}
+	if addr := dyn.Listener.Addr().(*net.TCPAddr); addr.Port != dyn.HostPort || !addr.IP.IsLoopback() {
+		t.Errorf("dynamic listener = %v, want loopback:%d", addr, dyn.HostPort)
+	}
+
+	// Static entry: src:dst mapping without listener.
+	if stat.Guest != 5432 || stat.HostPort != 15432 || stat.Listener != nil {
+		t.Errorf("static entry = %+v, want 5432->15432 without listener", stat)
+	}
+
+	// Env contract: named dynamic port exported for the sandbox, allowlist
+	// marker present for the guest forwarder.
+	if got := plan.EnvSet["KEG_PORT_DEV_SERVER"]; got != fmt.Sprint(dyn.HostPort) {
+		t.Errorf("KEG_PORT_DEV_SERVER = %q, want %q", got, fmt.Sprint(dyn.HostPort))
+	}
+	if got, want := plan.EnvSet[orchestrator.EnvPortsForward], "8080,5432"; got != want {
+		t.Errorf("%s = %q, want %q", orchestrator.EnvPortsForward, got, want)
+	}
+}
+
+func TestBuildRunPlan_NoPortsNoMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if len(plan.Ports) != 0 {
+		t.Fatalf("plan.Ports = %v, want none", plan.Ports)
+	}
+	if _, ok := plan.EnvSet[orchestrator.EnvPortsForward]; ok {
+		t.Errorf("%s set without declared ports (deny-by-default violated)", orchestrator.EnvPortsForward)
 	}
 }

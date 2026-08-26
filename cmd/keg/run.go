@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/portsfw"
 	"github.com/smerschjohann/keg/internal/template"
 )
 
@@ -134,6 +136,31 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		plan.HostsFile = hostsPath
 	}
 
+	// Port back-channel (Kanal E): resolve entries and reserve dynamic host
+	// ports up front — the binding IS the reservation, so nothing can steal
+	// the port between planning and serving. Named entries are exported to
+	// the sandbox as KEG_PORT_<NAME>; the guest forwarder gets the
+	// target allowlist via KEG_PORTS (deny-by-default).
+	if len(repo.Ports) > 0 {
+		resolved, err := portsfw.Resolve(repo.Ports, func() (*net.Listener, error) {
+			var lc net.ListenConfig
+			ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+			if err != nil {
+				return nil, err
+			}
+			return &ln, nil
+		})
+		if err != nil {
+			closePortListeners(resolved)
+			return orchestrator.Plan{}, fmt.Errorf("resolve ports: %w", err)
+		}
+		plan.Ports = resolved
+		for k, v := range portsfw.PortEnv(resolved) {
+			plan.EnvSet[k] = v
+		}
+		plan.EnvSet[orchestrator.EnvPortsForward] = portsfw.FormatAllowed(resolved)
+	}
+
 	// Prepare host-side directories per overlay mode.
 	tmpBase := effective.Paths.TmpBase
 	if expanded, err := config.ExpandPath(tmpBase); err == nil && expanded != "" {
@@ -182,6 +209,16 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	}
 
 	return plan, nil
+}
+
+// closePortListeners releases the pre-bound channel-E reservations when
+// plan building fails after allocation.
+func closePortListeners(ports []portsfw.ResolvedPort) {
+	for _, p := range ports {
+		if p.Listener != nil {
+			_ = p.Listener.Close()
+		}
+	}
 }
 
 // runAction implements `keg run [--] <cmd…>`: build the plan, launch
@@ -245,6 +282,14 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "keg: egress proxy: %v\n", err)
+		}
+	}
+
+	// Port back-channel: listeners were reserved during plan building;
+	// serving starts now and ends with Sandbox.Close.
+	if len(plan.Ports) > 0 {
+		if err := sb.StartPortsForward(plan.Ports); err != nil {
+			fmt.Fprintf(os.Stderr, "keg: ports forward: %v\n", err)
 		}
 	}
 

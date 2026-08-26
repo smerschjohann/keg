@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,8 +22,13 @@ type Sandbox struct {
 	waitCh chan waitResult
 
 	// hostEnds are the orchestrator-owned socketpair ends; the guest holds
-	// the peers at fds FDProxy/FDDNS/FDRunner. Closed by Close().
+	// the peers at fds FDProxy/FDDNS/FDRunner/FDPorts. Closed by Close().
 	hostEnds []*os.File
+
+	// portListeners are the channel-E host listeners started by
+	// StartPortsForward; released by Close BEFORE the host ends die
+	// (session/streams first via end closure, then listeners).
+	portListeners []net.Listener
 
 	raw    *rawEndpoints // ip->endpoint correlation (transparent mode)
 	rawCfg rawCfg
@@ -301,8 +307,14 @@ func (s *Sandbox) Signal(sig os.Signal) error {
 	return s.cmd.Process.Signal(sig)
 }
 
-// Close releases orchestrator-owned resources (channel host ends).
+// Close releases orchestrator-owned resources: the port back-channel
+// listeners first, then the channel host ends (whose closure unwinds the
+// muxado sessions and every stream riding on them).
 func (s *Sandbox) Close() {
+	for _, ln := range s.portListeners {
+		_ = ln.Close()
+	}
+	s.portListeners = nil
 	closeFiles(s.hostEnds)
 	s.hostEnds = nil
 }

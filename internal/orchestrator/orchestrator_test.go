@@ -334,12 +334,12 @@ func TestBuildArgs_DeterministicAcrossRuns(t *testing.T) {
 }
 
 // TestFDPlan_ExtraFileCount pins the FD inheritance contract: exactly the
-// three channel FDs are handed to bwrap via ExtraFiles (fds 3..5 inside
-// the sandbox; CONCEPT.md §9).
+// four channel FDs are handed to bwrap via ExtraFiles (fds 3..6 inside the
+// sandbox; CONCEPT.md §9 — proxy, DNS, runner, port back-channel).
 func TestFDPlan_ExtraFileCount(t *testing.T) {
-	if FDPreserved != 3 || FDProxy != 3 || FDDNS != 4 || FDRunner != 5 {
-		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d preserved=%d",
-			FDProxy, FDDNS, FDRunner, FDPreserved)
+	if FDPreserved != 4 || FDProxy != 3 || FDDNS != 4 || FDRunner != 5 || FDPorts != 6 {
+		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d ports=%d preserved=%d",
+			FDProxy, FDDNS, FDRunner, FDPorts, FDPreserved)
 	}
 }
 

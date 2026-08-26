@@ -2,15 +2,18 @@ package orchestrator
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/egress/dns"
 	"github.com/smerschjohann/keg/internal/egress/proxy"
+	"github.com/smerschjohann/keg/internal/portsfw"
 
 	"golang.ngrok.com/muxado"
 )
@@ -56,6 +59,38 @@ func (s *Sandbox) Channel(guestFD int) *os.File {
 		return nil
 	}
 	return s.hostEnds[idx]
+}
+
+// StartPortsForward serves the port back-channel (Kanal E, CONCEPT.md §4.9):
+// every declared entry gets a TCP listener bound to 127.0.0.1 ONLY — a
+// collision on a static port is a clear error, dynamic entries arrive with
+// pre-bound listeners (the binding IS the reservation, no steal window).
+// Each accepted connection is tunneled over channel E to the sandbox
+// loopback target. Resources are released by Sandbox.Close.
+func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
+	file := s.Channel(FDPorts)
+	if file == nil {
+		return fmt.Errorf("ports forward: channel fd %d not available", FDPorts)
+	}
+	sess := muxado.Server(file, nil)
+	for _, p := range ports {
+		ln := p.Listener
+		if ln == nil {
+			var lc net.ListenConfig
+			bound, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p.HostPort)))
+			if err != nil {
+				for _, opened := range s.portListeners {
+					_ = opened.Close()
+				}
+				s.portListeners = nil
+				return fmt.Errorf("ports forward %q: bind 127.0.0.1:%d: %w", p.Name, p.HostPort, err)
+			}
+			ln = bound
+		}
+		s.portListeners = append(s.portListeners, ln)
+		go func() { _ = portsfw.Forward(sess, ln, p.Guest) }()
+	}
+	return nil
 }
 
 // StartEgressProxy serves the whitelist proxy on channel A until the

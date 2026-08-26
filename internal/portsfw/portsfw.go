@@ -23,12 +23,14 @@ import (
 
 // ResolvedPort is one port back-channel entry with its final host port
 // (dynamic entries carry the allocated value). Listener holds the
-// pre-bound host listener when the entry was resolved with real
-// allocation; tests may leave it nil.
+// pre-bound host listener for dynamic entries — the binding IS the port
+// reservation, so no second process can steal the port between resolve
+// and serve; tests may leave it nil (static entries bind at start).
 type ResolvedPort struct {
 	Name     string // optional; enables KEG_PORT_<NAME>
 	Guest    int    // port inside the sandbox
 	HostPort int    // loopback port on the host
+	Listener net.Listener
 }
 
 // Resolve turns parsed specs into concrete port entries. alloc supplies a
@@ -49,7 +51,7 @@ func Resolve(specs []config.PortSpec, alloc func() (*net.Listener, error)) ([]Re
 		if !ok {
 			return nil, fmt.Errorf("allocate dynamic port %q: listener address %T is not TCP", s.Name, (*ln).Addr())
 		}
-		out = append(out, ResolvedPort{Name: s.Name, Guest: s.Guest, HostPort: addr.Port})
+		out = append(out, ResolvedPort{Name: s.Name, Guest: s.Guest, HostPort: addr.Port, Listener: *ln})
 	}
 	return out, nil
 }

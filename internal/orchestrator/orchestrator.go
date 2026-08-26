@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/portsfw"
 )
 
 // FDProxy/FDDNS/FDRunner name the guest-side descriptors. bwrap (>= 0.11)
@@ -20,8 +21,9 @@ const (
 	FDProxy  = 3 // Kanal A: egress proxy
 	FDDNS    = 4 // Kanal B: DNS
 	FDRunner = 5 // Kanal C: delegation runner
+	FDPorts  = 6 // Kanal E: port back-channel (host → sandbox services)
 	// FDPreserved counts the extra FDs handed to bwrap via ExtraFiles.
-	FDPreserved = 3
+	FDPreserved = 4
 )
 
 // Overlay selects the repository write mode.
@@ -114,6 +116,10 @@ type Plan struct {
 	// guest entrypoint: binds the binary read-only into the sandbox and
 	// prefixes the command with the guest dispatch name.
 	SelfExe string
+
+	// Ports carries the resolved port back-channel entries (Kanal E);
+	// dynamic entries hold their pre-bound host listener.
+	Ports []portsfw.ResolvedPort
 
 	Command []string // command to exec after `--`
 }

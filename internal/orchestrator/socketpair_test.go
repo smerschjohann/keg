@@ -83,9 +83,9 @@ func TestStripDeniedEnv_KeepsExplicitSets(t *testing.T) {
 func TestFDConstants_StablePlan(t *testing.T) {
 	// The FD map is protocol-relevant (CONCEPT.md §9); changing these
 	// numbers breaks host<->guest coordination.
-	if FDProxy != 3 || FDDNS != 4 || FDRunner != 5 || FDPreserved != 3 {
-		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d preserved=%d",
-			FDProxy, FDDNS, FDRunner, FDPreserved)
+	if FDProxy != 3 || FDDNS != 4 || FDRunner != 5 || FDPorts != 6 || FDPreserved != 4 {
+		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d ports=%d preserved=%d",
+			FDProxy, FDDNS, FDRunner, FDPorts, FDPreserved)
 	}
 }
 
