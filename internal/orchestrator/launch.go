@@ -133,7 +133,7 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	// namespace, prepares loopback and serves channel B (:53), then execs
 	// bwrap so the sandbox shares that namespace. Channel A keeps its own
 	// socketpair (fd 3); fd 4/5 stay reserved for future channels.
-	stage := &stageConfig{BwrapPath: bin, Args: args, DNS: p.EgressDNS}
+	stage := &stageConfig{BwrapPath: bin, Args: args, DNS: p.EgressDNS, Transparent: p.Transparent}
 	unshareBin, err := findUnshare()
 	if err != nil {
 		return nil, err

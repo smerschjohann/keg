@@ -77,12 +77,17 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 			*effective.Security.AllowWeakBwrap,
 		Overlay:         overlay,
 		EgressWhitelist: repo.Network.AllowedDomains,
+		Transparent:     repo.Network.Mode == "transparent",
 	}
 	for k, v := range repo.Env.Set {
 		plan.EnvSet[k] = v
 	}
-	for k, v := range orchestrator.ProxyEnv(repo.Network.AllowedDomains) {
-		plan.EnvSet[k] = v
+	// Explicit-proxy vars only make sense in proxy mode; transparent mode
+	// intercepts at the network layer instead.
+	if repo.Network.Mode != "transparent" {
+		for k, v := range orchestrator.ProxyEnv(repo.Network.AllowedDomains) {
+			plan.EnvSet[k] = v
+		}
 	}
 
 	// DNS channel: active whenever any egress feature is configured

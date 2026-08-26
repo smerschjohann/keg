@@ -29,9 +29,10 @@ const stageEnvVar = "KEG_STAGE"
 
 // stageConfig is everything the stage needs before exec'ing bwrap.
 type stageConfig struct {
-	BwrapPath string     `json:"bwrap_path"`
-	Args      []string   `json:"args"`
-	DNS       *DNSConfig `json:"dns,omitempty"`
+	BwrapPath   string     `json:"bwrap_path"`
+	Args        []string   `json:"args"`
+	DNS         *DNSConfig `json:"dns,omitempty"`
+	Transparent bool       `json:"transparent,omitempty"`
 }
 
 func init() {
@@ -99,6 +100,17 @@ func netnsStageMain() {
 	channelFiles := make([]*os.File, FDPreserved)
 	for i, fd := range []int{FDProxy, FDDNS, FDRunner} {
 		channelFiles[i] = os.NewFile(uintptr(fd), fmt.Sprintf("channel-%d", i))
+	}
+
+	if cfg.Transparent {
+		if err := setupTransparentNet(); err != nil {
+			fmt.Fprintf(os.Stderr, "keg netns stage: transparent: %v\n", err)
+			os.Exit(125)
+		}
+		if err := startTransparentRelay(channelFiles[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "keg netns stage: transparent relay: %v\n", err)
+			os.Exit(125)
+		}
 	}
 
 	if cfg.DNS != nil {

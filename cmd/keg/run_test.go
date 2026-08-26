@@ -338,3 +338,28 @@ func TestBuildRunPlan_DefaultUpstreamIsHostResolver(t *testing.T) {
 		t.Errorf("EgressDNS.Upstream = %v, want %q", plan.EgressDNS, hostNS)
 	}
 }
+
+// TestBuildRunPlan_TransparentSkipsProxyVars pins that transparent mode
+// leaves the environment untouched (the app may ignore proxies anyway).
+func TestBuildRunPlan_TransparentSkipsProxyVars(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+network:
+  mode: transparent
+  allowed_domains:
+    - "*.svc.cluster.local"
+`)
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	for k := range plan.EnvSet {
+		if strings.Contains(k, "PROXY") {
+			t.Errorf("transparent mode injected %s: %v", k, plan.EnvSet)
+		}
+	}
+	if !plan.Transparent {
+		t.Error("plan.Transparent not set")
+	}
+}

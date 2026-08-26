@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
 )
 
@@ -114,4 +115,9 @@ func writeTempFile(t *testing.T, name, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// mountFile returns a read-only file bind for the plan.
+func mountFile(hostPath, dest string) config.Mount {
+	return config.Mount{Src: hostPath, Dest: dest, Mode: config.MountRO}
 }

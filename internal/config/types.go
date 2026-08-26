@@ -120,6 +120,7 @@ func (p *PortSpec) UnmarshalYAML(value *yaml.Node) error {
 
 // Network configures egress policy.
 type Network struct {
+	Mode           string               `yaml:"mode"` // "" | "proxy" | "transparent"
 	Isolated       *bool                `yaml:"isolated"`
 	AllowedDomains []string             `yaml:"allowed_domains"`
 	DNS            DNS                  `yaml:"dns"`
@@ -330,6 +331,11 @@ func (r *Repo) validate() error {
 		if len(raw.Subcommands) == 0 {
 			return fmt.Errorf("repo config: delegated_tasks.raw[%d] (%s): subcommands must not be empty", i, raw.Cmd)
 		}
+	}
+	switch r.Network.Mode {
+	case "", "proxy", "transparent":
+	default:
+		return fmt.Errorf("repo config: network.mode must be proxy|transparent")
 	}
 	for name, src := range r.Network.DNS.Hosts {
 		if src == "" {

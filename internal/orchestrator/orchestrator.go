@@ -100,6 +100,9 @@ type Plan struct {
 	EgressWhitelist []string
 	// EgressDNS carries channel-B policy; nil disables the DNS channel.
 	EgressDNS *DNSConfig
+	// Transparent enables the nftables-backed transparent TCP relay in the
+	// netns stage (workload ignores HTTP_PROXY).
+	Transparent bool
 	// HostsFile is a generated hosts file ro-bound to /etc/hosts so static
 	// dns.hosts mappings resolve natively (glibc reads files first).
 	HostsFile string
