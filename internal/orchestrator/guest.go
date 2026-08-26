@@ -2,13 +2,9 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
-	"os/signal"
-	"syscall"
 
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/landlock"
@@ -246,56 +242,20 @@ func startProxyBridge(file *os.File, ln net.Listener) (*proxy.Bridge, muxado.Ses
 	return proxy.NewBridge(sess, ln), sess
 }
 
-// runGuestCommand spawns argv as child, forwards signals, waits and maps
-// the result onto conventional exit codes: child code verbatim, signal
-// death as 128+signum, spawn failure or exec errors as 127.
+// runGuestCommand spawns argv as a child process, forwarding signals and
+// mirroring the exit code. When os.Stdin is a terminal it allocates a PTY so
+// that interactive shells and TUI programs (bash readline, agy, htop, …)
+// receive a proper controlling terminal. When stdin is a pipe or file it
+// falls back to plain stdio forwarding.
 func runGuestCommand(argv []string) int {
 	if len(argv) == 0 {
 		fmt.Fprintln(os.Stderr, "keg guest: no command given")
 		return 127
 	}
-	cmd := exec.CommandContext(context.Background(), argv[0], argv[1:]...) // #nosec G702 -- trusted caller (host-side orchestrator); arbitrary argv is the whole point
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "keg guest: exec %s: %v\n", argv[0], err)
-		return 127
-	}
-	// The resident guest acts as init-like wrapper: signals aimed at the
-	// sandbox (SIGINT from the tty, SIGTERM from the orchestrator) belong
-	// to the workload, so catch them here and forward.
-	sigCh := make(chan os.Signal, 8)
-	signal.Notify(sigCh)
-	defer signal.Stop(sigCh)
-	go func() {
-		for sig := range sigCh {
-			if sig == syscall.SIGCHLD {
-				continue // reaped by cmd.Wait, not part of the workload
-			}
-			_ = cmd.Process.Signal(sig)
-		}
-	}()
-
-	err := cmd.Wait()
-	if err == nil {
-		return 0
-	}
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
-		fmt.Fprintf(os.Stderr, "keg guest: wait %s: %v\n", argv[0], err)
-		return 127
-	}
-	if code := ee.ExitCode(); code >= 0 {
-		return code
-	}
-	// Signaled: mirror shell convention 128+signum.
-	ws, ok := ee.Sys().(syscall.WaitStatus)
-	if !ok || !ws.Signaled() {
-		return 127
-	}
-	return 128 + int(ws.Signal())
+	// PTY-aware dispatch: pty.go contains isTerminal, openPTY, and both
+	// execution paths (PTY + plain). Signal forwarding and exit-code mapping
+	// live there too, so this function stays as a thin wrapper.
+	return runGuestCommandMaybePTY(argv, os.Stdout, os.Stderr)
 }
 
 // InitGuestDispatch is the single reentry gate for keg binaries: it
