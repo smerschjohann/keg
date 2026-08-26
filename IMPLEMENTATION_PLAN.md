@@ -5,11 +5,8 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M4 vollständig** (inkl. Transparent-Modus und
-> Port-Rückkanal), M5 weitgehend umgesetzt: Whitelist-Engine, Runner-
-> Server, Delegate-Client, Gast-Bridge und CLI-Verdrahtung sind grün
-> getestet; offen ist der End-to-End-Integrationstest (Accept-Stall,
-> siehe Umsetzungsnotizen M5).
+> Stand: **Phase 0 + M1–M5 vollständig** (inkl. Transparent-Modus,
+> Port-Rückkanal und Delegations-Kanal C inkl. End-to-End-Integrationstest).
 > Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -557,10 +554,7 @@ auf `127.0.0.1:<port>` antwortet.
 
 ## 7. WP-M5 — Delegation (Kanal C)
 
-**Status:** 🔶 §7.1 vollständig erledigt; §7.2 implementiert und über
-Unit-/CLI-Tests abgedeckt — es fehlt ausschließlich der bwrap-basierte
-End-to-End-Test (`TestSandboxDelegation`, aktuell sichtbar geskippt:
-Guest-Bridge-Accept-Stall, Notizen am Abschnittsende).
+**Status:** ✅ erledigt (§7.1 und §7.2 vollständig implementiert, unit-getestet und durch bwrap-basierten End-to-End-Integrationstest `TestSandboxDelegation` verifiziert).
 
 **Umgesetzt:**
 
@@ -622,8 +616,8 @@ Guest-Bridge-Accept-Stall, Notizen am Abschnittsende).
 schreibt Marker + Exit-Code; Ablehnung ⇒ 126 mit Grund; mehrzeilige
 Commit-Messages via b64.
 
-**DoD:** siehe Status oben — Unit-seitig vollständig nachgewiesen;
-verbleibend ist die Reaktivierung von `TestSandboxDelegation`.
+**DoD:** ✅ Alle Unit- und Integrationstests grün (`TestSandboxDelegation`
+reaktiviert und stabil).
 
 #### Umsetzungsnotizen M5 (empirisch verifiziert)
 
@@ -638,17 +632,13 @@ verbleibend ist die Reaktivierung von `TestSandboxDelegation`.
 3. **muxado-Accept wacht nur beim eigenen Session-Close** (bekannt aus
    M4): ServeSession/Bridge-Stop-Kode schließt deshalb immer zuerst die
    eigene Session.
-4. **OFFEN — Accept-Stall im echten Lauf:** Im Unit-E2E (Bridge+Server+
-   Client über AF_UNIX-Socketpairs im Testprozess) funktioniert die
-   komplette Kette inkl. Exec. In der echten Sandbox dialt der Workload
-   erfolgreich zum guestgebundenen Socket (`[ -S ]` positiv), aber
-   `ln.Accept()` im residenten Guest liefert die Verbindung nicht;
-   auf dem Kanal-Ende des Orchestrators arriveiert kein Stream.
-   Heuristik für die Aufklärung: erst Stage-/Scrub-Hygiene von fd 5 in
-   bwrap+netns verifizieren (`netns.go` reicht channelFiles bereits
-   durch; Verdacht doppelte `os.NewFile`-Wraps wie in M3-Notiz 4), dann
-   Workload-seitigen Dial über ein minimalen `/bin/sh`-Repro ohne
-   unseren Client isolieren.
+4. **Reaktivierung TestSandboxDelegation:** Der vermeintliche Accept-Stall
+   lag daran, dass in der Integrations-Testsuite das Test-Binary selbst
+   an `/.keg/keg` gebunden wurde. Beim Aufruf von `keg delegate`
+   im Sandbox-Workload lief das Test-Binary in `TestMain`, welches den
+   Subcommand `delegate` nicht abfing, sondern die gesamte Testsuite rekursiv
+   im Sandbox-Prozess startete. Durch die Ergänzung des `delegate`-Dispatches
+   in `TestMain` ist der E2E-Lauf vollständig funktionsfähig und grün.
 5. **RUNNER_WHITELIST bleibt Kompatibilitäts-Oberfläche:** komma-
    separierte exact-Tasks aus dem Host-Env, Trim vor Merge, wirken
    zusätzlich zur Repo-Config (`TestBuildRunPlan_RunnerWhitelistEnvCompat`).
@@ -761,9 +751,11 @@ nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
-Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 §7.1 ✅, §7.2 grün
-bis auf e2e-Reaktivierung** (Accept-Stall, Notizen M5).
-Erster nutzbarer Schnitt: isolierte Shell mit Overlay-Modi, kontrolliertem
-HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf :53
-(Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
-Proxy- oder Transparent-Modus (rohes TCP via DNS-Korrelation).
+Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 ✅** (§7.1, §7.2
+vollständig inkl. e2e).
+Erster nutzbarer Schnitt nach M5 vollständig für den Bestands-Workflow nutzbar:
+isolierte Shell mit Overlay-Modi, kontrolliertem HTTP(S)-Egress (Kanal A) und
+echtem whitelist-filternden DNS auf :53 (Kanal B) inklusive cluster.local-
+Auflösung über kube-dns — wahlweise im Proxy- oder Transparent-Modus
+(rohes TCP via DNS-Korrelation) sowie Port-Rückkanal (Kanal E) und
+sichere Host-Delegation (Kanal C).
