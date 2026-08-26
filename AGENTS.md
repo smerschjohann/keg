@@ -108,7 +108,7 @@ Stdlib zuerst. Das Budget steht in `IMPLEMENTATION_PLAN.md` §1 und ist
 * **Code-Artefakte sind englisch:** Kommentare, Identifier, CLI-Usage-Strings,
   Fehlermeldungen und Commit-Messages auf Englisch (`misspell` prüft das).
 * Projekt-Dokumentation (`CONCEPT.md`, `THREAT_MODEL.md`,
-  `IMPLEMENTATION_PLAN.md`) bleibt deutsch; neue technische Docs dürfen auch
+  `docs/plans/*.md`) bleibt deutsch; neue technische Docs dürfen auch
   englisch sein — Konsistenz innerhalb eines Dokuments ist Pflicht.
 
 ## 8. Definition of Done (je Task)
