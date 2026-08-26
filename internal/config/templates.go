@@ -98,13 +98,21 @@ const goEnvTimeout = 5 * time.Second
 
 // GoRootNeedsBind reports whether the detected GOROOT lives outside the
 // always-bound /usr tree and therefore needs its own ro-bind.
-func (tc ToolchainPaths) GoRootNeedsBind() bool {
-	if tc.GoRoot == "" {
+func (t ToolchainPaths) GoRootNeedsBind() bool {
+	if t.GoRoot == "" {
 		return false
 	}
-	rel, err := filepath.Rel("/usr", tc.GoRoot)
-	if err != nil {
-		return true
+	clean := filepath.Clean(t.GoRoot)
+	return clean != "/usr" && !strings.HasPrefix(clean, "/usr/")
+}
+
+// CheckCGOToolchain checks whether the host C compiler/linker tools needed for CGO
+// (e.g. gcc, clang, or cc) are available on PATH.
+func CheckCGOToolchain(lookPath func(string) (string, error)) error {
+	for _, cc := range []string{"gcc", "clang", "cc"} {
+		if p, err := lookPath(cc); err == nil && p != "" {
+			return nil
+		}
 	}
-	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return fmt.Errorf("cgo requires a C compiler (gcc, clang, or cc) but none was found on PATH")
 }

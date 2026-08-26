@@ -18,6 +18,7 @@ import (
 	"github.com/smerschjohann/keg/internal/orchestrator"
 	"github.com/smerschjohann/keg/internal/portsfw"
 	"github.com/smerschjohann/keg/internal/runner"
+	"github.com/smerschjohann/keg/internal/secrets"
 	"github.com/smerschjohann/keg/internal/template"
 )
 
@@ -100,7 +101,12 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		SNIDomains:   repo.Network.SNIDomains,
 		TCPEndpoints: repo.Network.TCPEndpoints,
 		Transparent:  repo.Network.Mode == "transparent",
+		Landlock:     effective.Security.Landlock,
 	}
+	if plan.Landlock == "" {
+		plan.Landlock = "auto"
+	}
+	plan.EnvSet[orchestrator.EnvLandlock] = plan.Landlock
 	for k, v := range repo.Env.Set {
 		plan.EnvSet[k] = v
 	}
@@ -140,6 +146,22 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 			auditPath = expanded
 		}
 		plan.AuditFile = auditPath
+	}
+
+	// Secrets: validate and perform initial fetch from secret_sources (CONCEPT.md §4.7).
+	if len(repo.Secrets) > 0 {
+		secretsDir := filepath.Join(plan.TmpDir, "secrets")
+		if err := secrets.FetchInitial(context.Background(), repo.Secrets, effective.SecretSources, secretsDir); err != nil {
+			return orchestrator.Plan{}, err
+		}
+		plan.SecretDir = secretsDir
+		plan.Secrets = repo.Secrets
+		plan.SecretSources = effective.SecretSources
+		for _, s := range repo.Secrets {
+			if s.Env != "" {
+				plan.EnvSet[s.Env] = "/run/secrets/" + s.Name
+			}
+		}
 	}
 
 	// Language templates (CONCEPT.md §4.6) are additive building blocks:
@@ -485,6 +507,22 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		if err := sb.StartRunner(runnerCfg); err != nil {
 			fmt.Fprintf(os.Stderr, "keg: delegation runner: %v\n", err)
 		}
+	}
+
+	// Secret background refresher: keeps dynamic file secrets up-to-date while sandbox runs.
+	if len(plan.SecretDir) > 0 && len(plan.Secrets) > 0 {
+		refresher := secrets.NewRefresher()
+		go refresher.Start(ctx, plan.Secrets, plan.SecretSources, plan.SecretDir, func(name, status string) {
+			if auditWriter != nil {
+				w := bufio.NewWriter(auditWriter)
+				_, _ = fmt.Fprintf(w, "SECRET %s %s\n", name, status)
+				_ = w.Flush()
+			}
+			slog.Info("secret refresh", "name", name, "status", status)
+		}, func(err error) {
+			slog.Error("secret refresh fatal error", "err", err)
+			_ = sb.Signal(syscall.SIGTERM)
+		})
 	}
 
 	code, err := sb.Wait()

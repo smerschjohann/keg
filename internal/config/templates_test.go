@@ -210,3 +210,23 @@ func findMount(t *testing.T, mounts []Mount, dest string) Mount {
 	t.Fatalf("no mount with dest %q in %+v", dest, mounts)
 	return Mount{}
 }
+
+func TestCheckCGOToolchain(t *testing.T) {
+	t.Parallel()
+	lookPathSuccess := func(name string) (string, error) {
+		if name == "gcc" {
+			return "/usr/bin/gcc", nil
+		}
+		return "", errStub{}
+	}
+	if err := CheckCGOToolchain(lookPathSuccess); err != nil {
+		t.Errorf("CheckCGOToolchain with gcc: %v", err)
+	}
+
+	lookPathFail := func(string) (string, error) {
+		return "", errStub{}
+	}
+	if err := CheckCGOToolchain(lookPathFail); err == nil {
+		t.Error("CheckCGOToolchain without compiler should return error")
+	}
+}

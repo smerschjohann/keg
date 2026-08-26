@@ -729,3 +729,73 @@ func TestBuildRunPlan_AuditFile(t *testing.T) {
 		t.Errorf("AuditFile = %q, want %q", plan.AuditFile, auditPath)
 	}
 }
+
+func TestBuildRunPlan_Secrets_InitialFetchAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+secrets:
+  - name: ai_token
+    env: AI_TOKEN_FILE
+`)
+	script := filepath.Join(t.TempDir(), "get-token")
+	writeFile(t, script, "#!/bin/sh\necho -n \"test-ai-token\"")
+	_ = os.Chmod(script, 0o750)
+
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, `
+secret_sources:
+  ai_token:
+    cmd: ["`+script+`"]
+`)
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	wantSecretDir := filepath.Join(plan.TmpDir, "secrets")
+	if plan.SecretDir != wantSecretDir {
+		t.Errorf("SecretDir = %q, want %q", plan.SecretDir, wantSecretDir)
+	}
+	if plan.EnvSet["AI_TOKEN_FILE"] != "/run/secrets/ai_token" {
+		t.Errorf("AI_TOKEN_FILE env = %q, want /run/secrets/ai_token", plan.EnvSet["AI_TOKEN_FILE"])
+	}
+	data, err := os.ReadFile(filepath.Join(wantSecretDir, "ai_token"))
+	if err != nil {
+		t.Fatalf("read secret file: %v", err)
+	}
+	if string(data) != "test-ai-token" {
+		t.Errorf("secret data = %q, want test-ai-token", string(data))
+	}
+}
+
+func TestBuildRunPlan_Secrets_MissingSourceFails(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+secrets:
+  - name: missing_sec
+`)
+	_, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err == nil || !strings.Contains(err.Error(), "missing_sec") {
+		t.Fatalf("expected missing secret error, got: %v", err)
+	}
+}
+
+func TestBuildRunPlan_LandlockConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, "security:\n  landlock: \"on\"\n")
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.Landlock != "on" {
+		t.Errorf("Landlock = %q, want 'on'", plan.Landlock)
+	}
+	if plan.EnvSet[orchestrator.EnvLandlock] != "on" {
+		t.Errorf("EnvSet[%s] = %q, want 'on'", orchestrator.EnvLandlock, plan.EnvSet[orchestrator.EnvLandlock])
+	}
+}

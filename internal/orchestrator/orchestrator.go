@@ -145,6 +145,14 @@ type Plan struct {
 	// AuditWriter optionally receives audit decision lines from egress and runner channels.
 	AuditWriter io.Writer
 
+	// Secrets requested by the repository.
+	Secrets []config.SecretRef
+	// SecretSources defined in the user config.
+	SecretSources map[string]config.SecretSource
+
+	// Landlock controls Landlock LSM enforcement mode (auto | on | off).
+	Landlock string
+
 	Command []string // command to exec after `--`
 }
 

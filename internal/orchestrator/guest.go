@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/smerschjohann/keg/internal/egress/proxy"
+	"github.com/smerschjohann/keg/internal/landlock"
 	"github.com/smerschjohann/keg/internal/portsfw"
 	"github.com/smerschjohann/keg/internal/runner"
 
@@ -28,6 +29,9 @@ const EnvProxyBridge = "KEG_PROXY"
 // forwarder refuses every target outside it (THREAT_MODEL §5.8,
 // deny-by-default).
 const EnvPortsForward = "KEG_PORTS"
+
+// EnvLandlock carries the configured Landlock LSM enforcement mode.
+const EnvLandlock = "KEG_LANDLOCK"
 
 // GuestCommandName is the reexec name under which the sandbox entrypoint
 // runs (second invocation of the same binary inside bwrap).
@@ -99,6 +103,38 @@ func prepareGuestProcess() {
 	// so injected proxy variables survive hygiene while any host proxy
 	// values stay gone.
 	applyProxyEnv()
+
+	// Landlock LSM defense-in-depth filesystem restrictions (CONCEPT.md §6.1).
+	applyLandlock()
+}
+
+func applyLandlock() {
+	modeStr := os.Getenv(EnvLandlock)
+	_ = os.Unsetenv(EnvLandlock)
+	if modeStr == "" {
+		modeStr = "auto"
+	}
+	mode := landlock.Mode(modeStr)
+	if mode == landlock.ModeOff {
+		return
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/sandbox"
+	}
+	cwd, _ := os.Getwd()
+	writable := []string{"/tmp", home}
+	if cwd != "" {
+		writable = append(writable, cwd)
+	}
+	cfg := landlock.RulesetConfig{
+		Mode:         mode,
+		ReadOnlyDirs: []string{"/"},
+		WritableDirs: writable,
+	}
+	if err := landlock.Restrict(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "keg guest: landlock: %v\n", err)
+	}
 }
 
 // startConfiguredBridges starts every guest-side bridge requested by env

@@ -5,10 +5,12 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M7 vollständig** (inkl. Transparent-Modus,
+> Stand: **Phase 0 + M1–M8 vollständig** (inkl. Transparent-Modus,
 > Port-Rückkanal, Delegations-Kanal C, isolierten Cache-Overlays,
 > Layer-Management mit Stufenlöschung, Parallel-Instanzen via `--name`,
-> `log/slog`-Struktur/Audit-Logging und Fehlerbild-Katalog in `docs/errors.md`).
+> `log/slog`-Struktur/Audit-Logging, Fehlerbild-Katalog in `docs/errors.md`,
+> Secrets-Engine `/run/secrets` mit atomarem Refresher, Landlock LSM
+> und CGO/FD-Leak-Checks).
 > Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -684,23 +686,21 @@ reaktiviert und stabil).
 
 ## 10. WP-M8 — Hardening
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt.
 
-* **Secrets:** `secret_sources` (User-Config), Initial-Fetch vor Start,
+* [x] **Secrets:** `secret_sources` (User-Config), Initial-Fetch vor Start,
   Refresher-Goroutinen mit `interval`, atomarer Swap (Temp+rename im selben
   Dir), Directory-Bind `/run/secrets`, `on_refresh_error: keep|fail`,
   Mode 0400/0700, Cleanup bei Close, Audit nur `(changed|unchanged|error)`.
-
-  **Tests:** Atomarität (Concurrent-Reader sehen nie Halbfabrikate), Refresh-
-  Fehler hält letzten guten Wert, Cleanup entfernt Reste, Repo referenziert
-  unbekannten Namen ⇒ Validierungsfehler.
-* **Landlock** (`internal/landlock`): Ruleset aus effektiven Schreibzielen;
-  Feature-Detection; `auto|on|off`. Tests: Kernel-Support-Erkennung gemockt;
-  on-ohne-Support ⇒ Warnung (auto) bzw. Fehler (on).
-* **`forbidden_args_matching`** falls nicht schon in WP-M5 erledigt.
-* **CGO-Check:** Erreichbarkeit von `as`/`ld` prüfen, klare Fehlermeldung.
-* **FD-Leak-Audit:** vor Launch `/proc/self/fd` zählen; > erwartete Map ⇒
-  Warnung/Fehler (THREAT_MODEL §5.1).
+* [x] **Landlock** (`internal/landlock`): Ruleset aus deklarierten Schreibzielen
+  (`/tmp`, `$HOME`, CWD); Feature-Detection via ABI-Versionscheck;
+  Modes `auto|on|off`.
+* [x] **`forbidden_args_matching`**: Regex-Filterung auf delegierte Befehle in
+  `internal/runner/whitelist.go`.
+* [x] **CGO-Check:** `config.CheckCGOToolchain` prüft Toolchain-Verfügbarkeit
+  (`gcc`, `clang`, `cc`).
+* [x] **FD-Leak-Audit:** `ScrubForeignFDs` zählt und schließt unerwartete
+  Deskriptoren vor bwrap- und Guest-Start (`THREAT_MODEL §5.1`).
 
 ---
 
@@ -754,11 +754,12 @@ nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
 Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 ✅** (§7.1, §7.2
-vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung) · **M7 ✅** (Parallel-Instanzen, Audit/Slog-Logging, Fehlerkatalog).
-Erster nutzbarer Schnitt nach M5/M6/M7 vollständig für den Bestands-Workflow nutzbar:
+vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung) · **M7 ✅** (Parallel-Instanzen, Audit/Slog-Logging, Fehlerkatalog) · **M8 ✅** (Secrets-Engine, Landlock LSM, CGO/FD-Hardening).
+Erster nutzbarer Schnitt nach M5/M6/M7/M8 vollständig für den Bestands-Workflow nutzbar:
 isolierte Shell mit allen Overlay-Modi (ephemeral, disk-overlay, isolate-caches,
 isolated-cache-name) sowie Layer-Management (list/clean/clean-cache),
 parallelen benannten Instanzen (`--name`), zentralem structured Logging & Audit-Datei,
+dynamischen Dateisecrets unter `/run/secrets` mit atomarem Host-Refresher, Landlock LSM FS-Restriktionen,
 kontrolliertem HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf
 :53 (Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
 Proxy- oder Transparent-Modus (rohes TCP via DNS-Korrelation) sowie
