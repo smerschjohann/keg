@@ -5,7 +5,7 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M3 vollständig, M4 teilweise** (Details je Abschnitt),
+> Stand: **Phase 0 + M1–M3 vollständig, M4 teilweise, Transparent-Modus angelegt** (Details je Abschnitt),
 > jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -359,6 +359,37 @@ Namespace); Deny-by-default per NXDOMAIN; Whitelist geteilt mit Kanal A
 (Zonen-Semantik). Audit-Zeilen für DNS folgen mit dem zentralen Audit-Log
 (M7).
 
+### 5.1 Transparent-Modus & tcp_endpoints (M3-Fortschreibung)
+
+**Status:** 🔶 Kern implementiert, End-to-End offen.
+
+* `network.mode: transparent` — für Proxy-ignorierende Workloads:
+  Stage baut minimales Netz (Default-Route via lo), nftables OUTPUT
+  redirectet TCP auf konfigurierte Ports zu einem SNI-/Raw-Relay in der
+  Stage; Policy bleibt vollständig hostseitig.
+* **Zwei getrennte Policy-Mechanismen**, in der Config am Feldnamen
+  unterscheidbar:
+  * `sni_domains`: name-basiert, TLS :443 (SNI-Peek, kein MITM; ECH ⇒
+    fail-closed);
+  * `tcp_endpoints` (`host` + `ports[]`): rohes TCP via DNS-Korrelation —
+    der Resolver merkt sich forwarded A-Antworten erlaubter Namen in einer
+    IP→Endpoint-Tabelle; der Proxy prüft IP-literale CONNECT-Ziele dagegen
+    (`RawTargetCheck`, inkl. Port-Pinning).
+* Upstream-Dial weiterhin hostseitig ⇒ keine Loop-Gefahr, FQDNNetworkPolicy-
+  Semantik im Pod-Netz bleibt unberührt.
+
+**Offen:** SO_ORIGINAL_DST im Relay (aktuell fixe Zielannahme), Raw-Pfad-
+Integrationstest (Fake-TCP-Echo + `/dev/tcp`), TTL-Ablauf der Korrelation,
+Doku THREAT_MODEL §2.3/§5.2.
+
+**Umsetzungsnotizen (empirisch):** bwrap leert das Capability-Bounding-Set
+(:53/:443 nie bindbar aus dem Sandbox-Baum); glibc kennt keine Portsyntax
+in resolv.conf; fake-root-Mapping (`unshare -r`) bricht bwraps
+unprivilegierten Pfad ⇒ UID-1:1-Mapping + `--keep-caps` + Cap-Drop vor
+exec; per-Netns-Sysctl `ip_unprivileged_port_start=0` macht Standardports
+für den cap-less Workload erreichbar; doppeltes `os.NewFile` aufs selbe FD
+bricht die Poller-Registrierung.
+
 #### Umsetzungsnotizen M3 (empirisch verifiziert)
 
 1. **Port 53 unter reinem bwrap unmöglich:** bwrap leert das Capability-
@@ -580,8 +611,8 @@ kontrolliertem Egress. Nach **M5** vollständig für den Bestands-Workflow
 nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
-**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · als nächstes
-**M4** (Templates/Vars/Ports).
+**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (+ Transparent-
+Modus/tcp_endpoints 🔶) · **M4** 🔶 (§6.1 erledigt).
 Erster nutzbarer Schnitt: isolierte Shell mit Overlay-Modi, kontrolliertem
 HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf :53
 (Kanal B) inklusive cluster.local-Auflösung über kube-dns.
