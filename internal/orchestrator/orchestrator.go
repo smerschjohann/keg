@@ -297,10 +297,15 @@ func BuildArgs(p Plan) ([]string, error) {
 		}
 	}
 
+	// Runtime directories: /run tmpfs for delegation socket and secrets.
+	if p.EnableRunner || p.SecretDir != "" {
+		args = append(args, "--tmpfs", "/run")
+	}
+
 	// Secrets: whole-directory bind so atomic updates stay visible
 	// (CONCEPT.md §4.7).
 	if p.SecretDir != "" {
-		args = append(args, "--ro-bind", p.SecretDir, "/run/secrets")
+		args = append(args, "--dir", "/run/secrets", "--ro-bind", p.SecretDir, "/run/secrets")
 	}
 
 	// Injected resolver configuration.
@@ -350,13 +355,6 @@ func BuildArgs(p Plan) ([]string, error) {
 			"--ro-bind", p.SelfExe, "/.keg/keg",
 		)
 	}
-
-	// Delegation channel (Kanal C): the guest bridge binds its filesystem
-	// socket under /run, which does not exist otherwise.
-	if p.EnableRunner {
-		args = append(args, "--tmpfs", "/run")
-	}
-
 	// Raw extra args last: they can add to, not reliably retract, derived
 	// arguments (weak ones gated above).
 	args = append(args, p.BwrapArgs...)

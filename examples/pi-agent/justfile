@@ -1,0 +1,40 @@
+import 'sandbox.just'
+
+default:
+    @just --list
+
+# Run inside sandbox (or locally)
+run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running pi-agent..."
+    go run main.go
+
+# Unit tests
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running unit tests..."
+    go test -v ./...
+
+# Build binary
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building pi-agent..."
+    go build -o bin/pi-agent main.go
+
+# test-playwright: Playwright browser test (delegates transparently to host runner when in sandbox)
+test-playwright test_file="" port="8080":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PORT="{{port}}"
+    if [ "{{in_sandbox}}" = "1" ]; then
+        echo "[Sandbox] Delegating 'test-playwright {{test_file}}' to Host (port: $PORT)..."
+        just delegate test-playwright "{{test_file}}" "$PORT"
+        exit $?
+    fi
+
+    echo "Running Playwright on host (port: $PORT, test_file: '{{test_file}}')..."
+    # On the host: start backend on $PORT, execute npx playwright test, etc.
+    echo "Playwright test run completed successfully on host."

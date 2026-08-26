@@ -21,7 +21,7 @@ const SupportedVersion = "1"
 
 // BuiltinTemplates are the supported language templates (CONCEPT.md §4.6).
 var BuiltinTemplates = map[string]bool{
-	"go": true, "java": true, "node": true, "python": true,
+	"go": true, "golang": true, "java": true, "node": true, "python": true,
 }
 
 // Duration is a yaml-friendly time.Duration accepting strings like "5m".

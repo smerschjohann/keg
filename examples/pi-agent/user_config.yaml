@@ -1,0 +1,17 @@
+# Example user configuration (~/.config/keg/config.yaml or passed via --user-config)
+# Configures the host-side mechanism for fetching dynamic secrets.
+
+paths:
+  storage_base: "/var/lib/containers/storage/sandbox"
+  tmp_base: "/tmp"
+
+secret_sources:
+  ai_secret_key:
+    # Invokes genkey: genkey <name_of_keg_instance> <seconds_until_token_is_invalidated>
+    cmd: ["examples/pi-agent/genkey", "pi-agent", "30"]
+    interval: 10s
+    timeout: 5s
+    on_refresh_error: keep
+
+security:
+  landlock: auto

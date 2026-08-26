@@ -1,0 +1,33 @@
+version: "1"
+
+# Language toolchain preset: binds Go caches and exposes host GOROOT/bin safely
+templates:
+  - golang
+
+# Dynamic secrets engine: mounted to /run/secrets/ai_secret_key (read-only 0400)
+# and continuously updated by the host refresher.
+secrets:
+  - name: ai_secret_key
+    env: AI_SECRET_KEY
+
+# Zero-trust egress: only explicitly whitelisted AI API and Go module proxy endpoints
+network:
+  mode: proxy
+  dns:
+    enabled: true
+  sni_domains:
+    - api.anthropic.com
+    - api.openai.com
+    - proxy.golang.org
+    - sum.golang.org
+
+# Host delegation: allow specific tasks to run cleanly on the host via 'just delegate'
+delegated_tasks:
+  exact:
+    - build
+    - test
+  prefixes:
+    - "test-playwright"
+  raw:
+    - cmd: git
+      subcommands: [status, diff, log, add, commit]

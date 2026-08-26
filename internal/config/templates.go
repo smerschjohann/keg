@@ -31,7 +31,7 @@ func ExpandTemplates(names []string, sandboxHome string, tc ToolchainPaths) ([]M
 	env := map[string]string{}
 	for _, name := range names {
 		switch name {
-		case "go":
+		case "go", "golang":
 			env["GOTOOLCHAIN"] = "local" // never download toolchains offline
 			env["GOMODCACHE"] = sandboxHome + "/.cache/go/mod"
 			env["GOCACHE"] = sandboxHome + "/.cache/go/build"

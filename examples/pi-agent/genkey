@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# genkey — Generates a dynamic, time-limited AI secret token for a keg instance.
+# Usage: genkey <name_of_keg_instance> <seconds_until_token_is_invalidated>
+
+set -euo pipefail
+
+INSTANCE_NAME="${1:-pi-agent}"
+TTL_SECONDS="${2:-60}"
+EXPIRY=$(($(date +%s) + TTL_SECONDS))
+RAND_HEX=$(head -c 16 /dev/urandom | xxd -p 2>/dev/null || openssl rand -hex 16 2>/dev/null || echo "randomtoken$RANDOM$RANDOM")
+
+printf "ai-sec-%s-%d-%s\n" "$INSTANCE_NAME" "$EXPIRY" "$RAND_HEX"
