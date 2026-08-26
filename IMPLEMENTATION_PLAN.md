@@ -5,7 +5,7 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + WP-M1 + WP-M2 vollständig erledigt**, Details in den
+> Stand: **Phase 0 + WP-M1 + WP-M2 + WP-M3 vollständig erledigt**, Details in den
 > jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -321,24 +321,76 @@ manueller Smoke-Test).
 
 ## 5. WP-M3 — DNS-Kanal (B)
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt — mit wesentlichem Architektur-Gewinn: Die Sandbox
+bekommt einen **echten DNS auf 127.0.0.1:53** (resolv.conf-kompatibel).
+Umsetzungsnotizen am Abschnittsende.
 
-* Framing-Codec: `ReadFrame/WriteFrame` (2-Byte-Length-Prefix, RFC 1035 §4.2.2)
-  als eigenes Paket — auch vom Runner wiederverwendbar.
-* Resolver-Logik: hosts (exakt vor Wildcard, Single-Level-Splat) → Whitelist →
-  Upstream (`miekg/dns` Client) → NXDOMAIN. `on_refresh_error` gibt es hier
-  nicht; Timeouts konfigurierbar.
-* Bridges: UDP *und* TCP Listener `127.0.0.1:53`; Queue statt Drop
-  (Backpressure-Hinweis §4.4); resolv.conf-Injektion.
+**Umgesetzt:**
 
-**Tests:** Codec-Roundtrip + Truncation; Resolver-Tabellentests (hosts,
-Wildcard-Tiefe `a.b.foo.tld` matcht nicht, Whitelist-Fehlschlag ⇒ NXDOMAIN);
-UDP-Bridge-Lasttest (100 parallele Queries, keine Drops, goroutine-leak-frei).
+* Framing-Codec `internal/frame`: `ReadFrame/WriteFrame`
+  (2-Byte-Length-Prefix, RFC 1035 §4.2.2) — wiederverwendbar für den
+  Runner-Protokollkanal (M5). Tests: Roundtrip, Truncation, EOF,
+  Sequenz.
+* Resolver-Kern (`internal/egress/dns.Resolver`): hosts-Mappings
+  (exakt vor längstem Wildcard-Suffix) → Whitelist (Zonen-Semantik) →
+  Upstream (`miekg/dns`, UDP, Timeout) → NXDOMAIN. FORMERR bei kaputten
+  Queries; Response-ID echo garantiert.
+* **Netns-Stage** (`internal/orchestrator/netns.go`): Launch wrapt bwrap in
+  eine keg-eigene user+network Namespace-Kombination (unshare(1),
+  UID-mapped, `--keep-caps`). Die Stage bringt `lo` hoch, senkt
+  `ip_unprivileged_port_start`, bindet UDP+TCP :53 und exec'd bwrap mit
+  `--share-net` — die Sandbox teilt diese Namespace. Queries wandern
+  gerahmt über den fd4-Socketpair zur hostseitigen Policy.
+* resolv.conf-Injektion (`nameserver 127.0.0.1`) funktioniert damit wieder;
+  statische `dns.hosts`-Mappings werden zusätzlich als generierte
+  `/etc/hosts` gebunden (native Auflösung ohne DNS-Roundtrip).
+* Standard-Upstream = Host-Resolver (Zielumgebung: kube-dns; externes DNS
+  ist unerreichbar).
 
-**Integrationstest:** `getent hosts proxy.golang.org` in der Sandbox auflöst
-(Fake-Upstream auf Host), unbekannte Domain ⇒ NXDOMAIN.
+**Tests:** Codec-Roundtrip/-Truncation; Resolver-Tabellentests (hosts exakt
+und Wildcard, Zonen-Tiefe multi-level, Whitelist-Fehlschlag ⇒ NXDOMAIN,
+Upstream-Ausfall ⇒ SERVFAIL, ID-Echo); Bridge-Lasttest (100 parallele
+Queries, keine Drops); Integrationstest löst
+`kubernetes.default.svc.cluster.local` über :53 via kube-dns auf und prüft
+NXDOMAIN für Nicht-Whitelisted (`TestSandboxDNSChannel`).
 
-**DoD:** DNS-Queries laufen ausschließlich über Kanal B; Audit-Zeilen sichtbar.
+**DoD:** ✅ DNS-Queries laufen ausschließlich über Kanal B (:53 im privaten
+Namespace); Deny-by-default per NXDOMAIN; Whitelist geteilt mit Kanal A
+(Zonen-Semantik). Audit-Zeilen für DNS folgen mit dem zentralen Audit-Log
+(M7).
+
+#### Umsetzungsnotizen M3 (empirisch verifiziert)
+
+1. **Port 53 unter reinem bwrap unmöglich:** bwrap leert das Capability-
+   Bounding-Set komplett (CapEff/CapBnd=0), und der frische Netns gehört
+   dem Host-UserNS — niemand im Sandbox-Baum kann je :53 binden. Erste
+   Implementierung wich auf :5353 aus, aber glibc kennt keine Portsyntax
+   in resolv.conf (`nameserver ip:port` wird ignoriert) ⇒ toter Code.
+2. **Lösung: Netns-Wrapper.** unshare(1) erzeugt user+netns gemeinsam
+   (UID-Mapping 1000→1000 — NICHT `-r`: fake-root lässt bwrap in den
+   privilegierten Pfad laufen und er verweigert), `--keep-caps` erhält die
+   Caps bis in die Stage. Dort: lo up (SIOCSIFFLAGS-Ioctl), Port-Floor 0
+   (per-Netns-Sysctl!), :53 binden, dann **alle Caps droppen**
+   (capset v1, Magic 0x19980330) — bwrap verweigert sonst „Unexpected
+   capabilities" — und exec bwrap mit `--share-net`.
+3. **Upstream-Erreichbarkeit:** Die private Netns hat keine Routen. Der
+   Stage-Relay schickt Whitelist-Queries daher gerahmt über fd4 zum
+   Orchestrator zurück; Policy + Upstream-Dial laufen hostseitig. Die
+   Stage ist reines Relay (keine Policy) — gleiches Trust-Modell wie
+   vorher der Gast-Bridge-Ansatz.
+4. **FD-Hygiene doppelt genäht:** Channel-FDs werden in der Stage genau
+   einmal gewrappt und von allen Konsumenten geteilt (Doppel-`os.NewFile`
+   aufs selbe FD bricht die Poller-Registrierung — empirisch: Timeouts).
+5. **DNS-Whitelist mit Zonen-Semantik:** `*.svc.cluster.local` matcht
+   beliebige Tiefe (kubernetes.default.svc.cluster.local) — Kubernetes-
+   Namen tragen mehrere Labels vor der Zone. Der Proxy bleibt bewusst
+   Single-Level (SNI-Modell); beide Matcher sind getrennte Funktionen.
+6. **Default-Upstream = Host-Resolver:** In der Zielumgebung ist externes
+   DNS unerreichbar; Cluster-Namen via kube-dns sind der relevante Fall
+   (getestet). Explizites `dns.upstream` überschreibt weiterhin.
+7. **Isolation unverändert:** Die Wrapper-Netns enthält nur `lo`, keine
+   Routen; der Workload läuft cap-less (Bounding-Set leer). THREAT_MODEL
+   §5.1/§5.2 entsprechend nachgezogen.
 
 ---
 
@@ -523,8 +575,8 @@ kontrolliertem Egress. Nach **M5** vollständig für den Bestands-Workflow
 nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
-**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · als nächstes **M3**
-(DNS-Kanal B).
-Erster nutzbarer Schnitt existiert: isolierte Shell mit Overlay-Modi und
-kontrolliertem HTTP(S)-Egress über Kanal A (`allowed_domains`, Audit-
-zeilen, Upstream-Proxy aus Host-Umgebung) — DNS-Filterung folgt in M3.
+**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ · als nächstes
+**M4** (Templates/Vars/Ports).
+Erster nutzbarer Schnitt: isolierte Shell mit Overlay-Modi, kontrolliertem
+HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf :53
+(Kanal B) inklusive cluster.local-Auflösung über kube-dns.

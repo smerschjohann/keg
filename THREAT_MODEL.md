@@ -93,7 +93,7 @@ TB7: Host-Clients          ←→  Sandbox-Services        (Port-Rückkanal, nur
 
 | Threat | Bewertung | Maßnahme |
 |---|---|---|
-| **S/I:** Umgehung der Domain-Whitelist | Kernbedrohung P1 | Nur Loopback im NS ⇒ physisch kein anderer Weg; Proxy lehnt unbekannte CONNECT-Targets mit 403 ab; DNS antwortet NXDOMAIN (Deny-by-default); Hosts-Mappings autoritativ vor Whitelist |
+| **S/I:** Umgehung der Domain-Whitelist | Kernbedrohung P1 | Nur Loopback im NS ⇒ physisch kein anderer Weg; Proxy lehnt unbekannte CONNECT-Targets mit 403 ab; DNS antwortet NXDOMAIN (Deny-by-default); Hosts-Mappings autoritativ vor Whitelist. **Update (M3):** Der DNS-Listener :53 läuft im keg-eigenen Wrapper-Netns (Stage-Prozess, außerhalb des bwrap-Baums); Queries werden gerahmt über fd4 zur hostseitigen Policy relayed — die private Netns hat keine Routen, der Workload kann den Kanal weder umgehen noch die Policy beeinflussen |
 | **I:** DNS-Tunneling zur Exfiltration | Mittel | Whitelist + NXDOMAIN; Tunneling über *erlaubte* Domains bleibt theoretisch möglich (Residualrisiko — detektierbar per Audit-Log-Volumen) |
 | **I:** DoH/DoT-Bypass | Niedrig | DoH-Endpunkte werden nicht whitelisted; ohne DNS landet der Bootstrap nicht einmal |
 | **T:** IP-Literal-Dial statt DNS | — | Scheitert an `--unshare-net` (kein Routing außer Loopback) |
