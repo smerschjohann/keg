@@ -14,6 +14,7 @@ import (
 	"github.com/smerschjohann/keg/internal/egress/dns"
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/portsfw"
+	"github.com/smerschjohann/keg/internal/runner"
 
 	"golang.ngrok.com/muxado"
 )
@@ -147,5 +148,18 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 		},
 	}
 	go func() { _ = dns.Serve(muxado.Server(file, nil), resolver) }()
+	return nil
+}
+
+// StartRunner serves the delegation daemon on channel C until the sandbox
+// exits (Sandbox.Close ends the session, which ends ServeSession and kills
+// all running jobs). The engine was validated before Launch; whitelisted
+// jobs run in the repo root with the host user's environment.
+func (s *Sandbox) StartRunner(cfg runner.ServerConfig) error {
+	file := s.Channel(FDRunner)
+	if file == nil {
+		return fmt.Errorf("runner: channel fd %d not available", FDRunner)
+	}
+	go func() { _ = runner.ServeSession(muxado.Server(file, nil), cfg) }()
 	return nil
 }

@@ -462,3 +462,36 @@ func TestBuildArgs_ExtraPathDirs(t *testing.T) {
 		t.Errorf("PATH not extended correctly:\n%s", strings.Join(args, "\n"))
 	}
 }
+
+func TestBuildArgs_DelegationChannel(t *testing.T) {
+	plan := Plan{
+		RepoRoot:     "/repo",
+		SandboxHome:  "/home/sb",
+		SelfExe:      "/host/bin/keg",
+		EnableRunner: true,
+		EnvSet:       map[string]string{EnvDelegation: "1"},
+	}
+	args, err := BuildArgs(plan)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	argStr := strings.Join(args, "\x00")
+	if !strings.Contains(argStr, "--tmpfs\x00/run") {
+		t.Errorf("--tmpfs /run missing from args:\n%v", args)
+	}
+	if !strings.Contains(argStr, "--setenv\x00"+EnvDelegation+"\x001") {
+		t.Errorf("%s marker not exported to the sandbox:\n%v", EnvDelegation, args)
+	}
+
+	// The delegate client must be reachable via PATH once the guest binary
+	// is bound into the sandbox.
+	var path string
+	for i, a := range args {
+		if a == "PATH" && i+1 < len(args) {
+			path = args[i+1]
+		}
+	}
+	if !strings.Contains(path, "/.keg") {
+		t.Errorf("PATH = %q, want /.keg entry so `keg delegate` resolves", path)
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/portsfw"
+	"github.com/smerschjohann/keg/internal/runner"
 
 	"github.com/moby/sys/reexec"
 	"golang.ngrok.com/muxado"
@@ -110,10 +111,35 @@ func startConfiguredBridges() func() {
 	if marker := os.Getenv(EnvPortsForward); marker != "" {
 		stops = append(stops, startPortForwarderFromFD(FDPorts, marker))
 	}
+	if os.Getenv(EnvDelegation) == "1" {
+		stops = append(stops, startRunnerBridgeFromFD(FDRunner))
+	}
 	return func() {
 		for _, stop := range stops {
 			stop()
 		}
+	}
+}
+
+// startRunnerBridgeFromFD serves the guest end of delegation channel C:
+// it binds /run/keg/runner.sock in the sandbox and pipes each workload
+// connection onto its own stream of fd FDRunner.
+func startRunnerBridgeFromFD(fd int) func() {
+	file := os.NewFile(uintptr(fd), "keg-runner-channel")
+	if file == nil {
+		fmt.Fprintf(os.Stderr, "keg guest: runner channel fd %d missing\n", fd)
+		return func() {}
+	}
+	sess := muxado.Client(file, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = runner.ServeGuestSocket(ctx, sess)
+	}()
+	return func() {
+		cancel() // closes session first (see Bridge teardown ordering), then unwinds
+		<-done
 	}
 }
 

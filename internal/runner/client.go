@@ -13,8 +13,9 @@ import (
 
 // SocketPath is the filesystem location of the delegation socket inside
 // the sandbox (CONCEPT.md §3). The guest bridge binds it; the delegate
-// client connects to it.
-const SocketPath = "/run/keg/runner.sock"
+// client connects to it. Package-level var so in-process tests can point
+// it at a temporary location.
+var SocketPath = "/run/keg/runner.sock"
 
 // Exec runs one whitelisted job over conn and streams its output to the
 // given writers. The returned int is always a valid process exit code:

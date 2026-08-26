@@ -507,3 +507,87 @@ env:
 		t.Errorf("GOMODCACHE = %q", plan.EnvSet["GOMODCACHE"])
 	}
 }
+
+func TestBuildRunPlan_DelegationChannel(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"
+delegated_tasks:
+  exact:
+    - container-build
+  raw:
+    - cmd: git
+      subcommands: [commit]
+      forbidden_args_matching: ["https://*"]
+`)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if len(plan.DelegatedTasks.Raw) != 1 || plan.DelegatedTasks.Raw[0].Cmd != "git" {
+		t.Errorf("DelegatedTasks not carried into the plan: %+v", plan.DelegatedTasks)
+	}
+	if plan.EnvSet[orchestrator.EnvDelegation] != "1" {
+		t.Errorf("EnvSet[%s] = %q, guest bridge would not start",
+			orchestrator.EnvDelegation, plan.EnvSet[orchestrator.EnvDelegation])
+	}
+	if plan.HooksDir == "" {
+		t.Fatal("HooksDir empty — git hook suppression would be disabled")
+	}
+	info, err := os.Stat(plan.HooksDir)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("HooksDir %q does not exist as a directory: %v", plan.HooksDir, err)
+	}
+	entries, err := os.ReadDir(plan.HooksDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("HooksDir must be EMPTY (it suppresses host hooks): entries=%v err=%v", entries, err)
+	}
+}
+
+func TestBuildRunPlan_NoTasksNoRunnerMarker(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.EnvSet[orchestrator.EnvDelegation] == "1" {
+		t.Error("EnvDelegation set without any delegated_tasks")
+	}
+}
+
+func TestBuildRunPlan_RunnerWhitelistEnvCompat(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
+	t.Setenv("RUNNER_WHITELIST", "container-build, k8s-deploy")
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	found := map[string]bool{}
+	for _, name := range plan.DelegatedTasks.Exact {
+		found[name] = true
+	}
+	if !found["k8s-deploy"] {
+		t.Errorf("RUNNER_WHITELIST entries not merged into the plan: %v", plan.DelegatedTasks.Exact)
+	}
+	if found[""] || found[" k8s-deploy"] {
+		t.Errorf("whitespace around entries must be trimmed: %v", plan.DelegatedTasks.Exact)
+	}
+}
+
+func TestBuildRunPlan_RunnerWhitelistAloneEnablesRunner(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
+	t.Setenv("RUNNER_WHITELIST", "deploy")
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if !plan.EnableRunner || plan.EnvSet[orchestrator.EnvDelegation] != "1" {
+		t.Error("RUNNER_WHITELIST without repo tasks must still enable delegation")
+	}
+}

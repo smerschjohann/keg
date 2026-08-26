@@ -14,6 +14,7 @@ import (
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
 	"github.com/smerschjohann/keg/internal/portsfw"
+	"github.com/smerschjohann/keg/internal/runner"
 	"github.com/smerschjohann/keg/internal/template"
 )
 
@@ -219,6 +220,36 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	}
 	plan.TmpDir = instanceDir
 
+	// Delegation channel (Kanal C): carry the repo whitelist into the plan,
+	// export the guest marker and prepare the empty hooks dir used to
+	// suppress host git hooks in delegated jobs (THREAT_MODEL §5.4).
+	// RUNNER_WHITELIST keeps the bestand's env override: comma-separated
+	// exact task names on top of the repo config.
+	tasks := repo.DelegatedTasks
+	if env := os.Getenv("RUNNER_WHITELIST"); env != "" {
+		for _, name := range strings.Split(env, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				tasks.Exact = append(tasks.Exact, name)
+			}
+		}
+	}
+	// User-config extras union with the repo rules (CONCEPT.md §5): a
+	// machine may allow MORE locally, never less.
+	tasks.Exact = append(tasks.Exact, effective.Runner.ExtraExact...)
+	tasks.Prefixes = append(tasks.Prefixes, effective.Runner.ExtraPrefixes...)
+	tasks.Raw = append(tasks.Raw, effective.Runner.ExtraRaw...)
+	if len(tasks.Exact) > 0 || len(tasks.Prefixes) > 0 || len(tasks.Raw) > 0 {
+		plan.DelegatedTasks = tasks
+		plan.EnableRunner = true
+		plan.EnvSet[orchestrator.EnvDelegation] = "1"
+		hooksDir := filepath.Join(instanceDir, "hooks")
+		// #nosec G703 -- hooksDir derives from the instance temp dir created above
+		if err := os.MkdirAll(hooksDir, 0o700); err != nil {
+			return orchestrator.Plan{}, fmt.Errorf("create hooks dir: %w", err)
+		}
+		plan.HooksDir = hooksDir
+	}
+
 	if overlay == orchestrator.OverlayDisk {
 		storageBase := effective.Paths.StorageBase
 		if storageBase == "" {
@@ -321,6 +352,22 @@ func runAction(ctx context.Context, c *cliCommand) error {
 	if len(plan.Ports) > 0 {
 		if err := sb.StartPortsForward(plan.Ports); err != nil {
 			fmt.Fprintf(os.Stderr, "keg: ports forward: %v\n", err)
+		}
+	}
+
+	// Delegation channel (Kanal C): the whitelist engine is validated here
+	// so a broken config still fails fast, before any workload starts.
+	if plan.EnableRunner {
+		engine, engineErr := runner.NewEngine(plan.DelegatedTasks, config.RunnerCfg{})
+		if engineErr != nil {
+			return fmt.Errorf("delegation whitelist: %w", engineErr)
+		}
+		if err := sb.StartRunner(runner.ServerConfig{
+			Engine:   engine,
+			RepoRoot: plan.RepoRoot,
+			HooksDir: plan.HooksDir,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "keg: delegation runner: %v\n", err)
 		}
 	}
 

@@ -26,6 +26,11 @@ const (
 	FDPreserved = 4
 )
 
+// EnvDelegation marks a live delegation channel on fd FDRunner. The guest
+// bridge binds /run/keg/runner.sock only when it is set — the marker
+// is the single source of truth (same pattern as KEG_PROXY/KEG_PORTS).
+const EnvDelegation = "KEG_RUNNER"
+
 // Overlay selects the repository write mode.
 type Overlay int
 
@@ -120,6 +125,16 @@ type Plan struct {
 	// Ports carries the resolved port back-channel entries (Kanal E);
 	// dynamic entries hold their pre-bound host listener.
 	Ports []portsfw.ResolvedPort
+	// DelegatedTasks carries the repo delegation whitelist (Kanal C).
+	// Empty disables the runner channel entirely.
+	DelegatedTasks config.DelegatedTasks
+	// HooksDir is an empty, keg-owned directory used to suppress git
+	// hooks in delegated jobs (THREAT_MODEL §5.4). Empty = no suppression.
+	HooksDir string
+	// EnableRunner mounts the sandbox-side /run for the guest bridge and
+	// routes runner channel start-up; EnvSet[EnvDelegation] carries the
+	// guest marker.
+	EnableRunner bool
 	// ExtraPathDirs are prepended to the sandbox PATH (e.g. GOROOT/bin for
 	// toolchains bound outside /usr).
 	ExtraPathDirs []string
@@ -283,6 +298,9 @@ func BuildArgs(p Plan) ([]string, error) {
 	// local tools, then the sandbox home and the system (all absolute so
 	// they resolve inside).
 	path := p.RepoRoot + "/.cache/bin:" + p.SandboxHome + "/.local/bin:/usr/local/bin:/usr/bin:/bin"
+	if p.SelfExe != "" {
+		path += ":/.keg" // `keg delegate` for delegation channel C
+	}
 	for _, dir := range slices.Backward(p.ExtraPathDirs) {
 		path = dir + ":" + path
 	}
@@ -296,6 +314,12 @@ func BuildArgs(p Plan) ([]string, error) {
 			"--tmpfs", "/.keg",
 			"--ro-bind", p.SelfExe, "/.keg/keg",
 		)
+	}
+
+	// Delegation channel (Kanal C): the guest bridge binds its filesystem
+	// socket under /run, which does not exist otherwise.
+	if p.EnableRunner {
+		args = append(args, "--tmpfs", "/run")
 	}
 
 	// Raw extra args last: they can add to, not reliably retract, derived

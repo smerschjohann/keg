@@ -61,6 +61,7 @@ func NewCommand() *cli.Command {
 					return runAction(ctx, c)
 				},
 			},
+			delegateCommand(),
 			{
 				Name:  "list",
 				Usage: "list persistent overlay layers",
