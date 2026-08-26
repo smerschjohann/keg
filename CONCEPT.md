@@ -725,13 +725,13 @@ templates:
 
 # First-class Environment-Steuerung für die Sandbox (Deny-by-default).
 # Werte sind template-bar ({{ .Vars… }}, {{ .Env… }}).
-# Reihenfolge: Basis-Isolation (nur Core-Vars HOME, TMPDIR, SHELL, PATH, CODE_KEG)
+# Reihenfolge: Basis-Isolation (nur Core-Vars HOME, TMPDIR, SHELL, PATH, CODE_KEG;
+# im interaktiven PTY-Modus zusätzlich Terminal-/Farb-Variablen wie TERM, COLORTERM)
 # -> Template-Env -> User-Global -> Repo -> repos[match] override -> CLI.
 # Konflikte: unset gewinnt über inherit; set gewinnt über geerbte Werte.
 env:
   inherit:                     # Explizite Host-Variablen durchreichen
     - LANG
-    - COLORTERM
   inherit_all: false           # true = alle Host-Vars durchreichen (außer Denied-Credentials)
   unset:                       # Zusätzliche Variablen aktiv entfernen
     - UNWANTED_VAR

@@ -303,9 +303,34 @@ var internalEnvMarkers = map[string]bool{
 	EnvLandlock:       true,
 }
 
+// InteractiveEnvVars lists host environment variables passed through to the
+// workload in interactive (PTY) sessions to support colored, localized and
+// full-featured terminal applications.
+var InteractiveEnvVars = []string{
+	"TERM",
+	"COLORTERM",
+	"TERMINFO",
+	"TERMINFO_DIRS",
+	"NO_COLOR",
+	"FORCE_COLOR",
+	"CLICOLOR",
+	"CLICOLOR_FORCE",
+	"LANG",
+	"LC_ALL",
+	"LC_CTYPE",
+	"LC_MESSAGES",
+}
+
 // BuildKeepEnv constructs the explicit environment for the workload command
 // using the KEG_ENV_KEEP marker and the current process environment.
 func BuildKeepEnv(markerData []byte, environ []string) []string {
+	return BuildKeepEnvInteractive(markerData, environ, false)
+}
+
+// BuildKeepEnvInteractive constructs the explicit environment for the workload
+// command. When interactive is true (PTY session), standard terminal and color
+// variables (InteractiveEnvVars) are forwarded from environ unless explicitly unset.
+func BuildKeepEnvInteractive(markerData []byte, environ []string, interactive bool) []string {
 	var marker EnvKeepMarker
 	hasMarker := false
 	if len(markerData) > 0 {
@@ -337,6 +362,16 @@ func BuildKeepEnv(markerData []byte, environ []string) []string {
 					continue
 				}
 				if val, ok := envMap[name]; ok {
+					out[name] = val
+				}
+			}
+		}
+		if interactive {
+			for _, name := range InteractiveEnvVars {
+				if slices.Contains(HostDeniedEnvVars, name) || slices.Contains(marker.Unset, name) {
+					continue
+				}
+				if val, ok := envMap[name]; ok && val != "" {
 					out[name] = val
 				}
 			}
@@ -384,7 +419,7 @@ func BuildKeepEnv(markerData []byte, environ []string) []string {
 	return res
 }
 
-func buildWorkloadEnv() []string {
+func buildWorkloadEnv(interactive bool) []string {
 	markerStr := os.Getenv(EnvKeepMarkerName)
-	return BuildKeepEnv([]byte(markerStr), os.Environ())
+	return BuildKeepEnvInteractive([]byte(markerStr), os.Environ(), interactive)
 }

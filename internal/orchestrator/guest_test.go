@@ -329,6 +329,127 @@ func TestBuildKeepEnv(t *testing.T) {
 	}
 }
 
+func TestBuildKeepEnv_Interactive(t *testing.T) {
+	tests := []struct {
+		name        string
+		marker      string
+		environ     []string
+		interactive bool
+		wantSet     map[string]string
+		dontWant    []string
+	}{
+		{
+			name: "interactive forwards TERM, COLORTERM and LANG from environ",
+			marker: `{
+				"core": ["HOME"]
+			}`,
+			environ: []string{
+				"HOME=/home/sandbox",
+				"TERM=xterm-256color",
+				"COLORTERM=truecolor",
+				"LANG=en_US.UTF-8",
+				"OTHER_LEAK=leak",
+			},
+			interactive: true,
+			wantSet: map[string]string{
+				"HOME":      "/home/sandbox",
+				"TERM":      "xterm-256color",
+				"COLORTERM": "truecolor",
+				"LANG":      "en_US.UTF-8",
+			},
+			dontWant: []string{"OTHER_LEAK"},
+		},
+		{
+			name: "interactive does not default TERM when unset in environ",
+			marker: `{
+				"core": ["HOME"]
+			}`,
+			environ: []string{
+				"HOME=/home/sandbox",
+			},
+			interactive: true,
+			wantSet: map[string]string{
+				"HOME": "/home/sandbox",
+			},
+			dontWant: []string{"TERM"},
+		},
+		{
+			name: "interactive respects unset for TERM and COLORTERM",
+			marker: `{
+				"core": ["HOME"],
+				"unset": ["COLORTERM", "TERM"]
+			}`,
+			environ: []string{
+				"HOME=/home/sandbox",
+				"TERM=xterm-256color",
+				"COLORTERM=truecolor",
+			},
+			interactive: true,
+			wantSet: map[string]string{
+				"HOME": "/home/sandbox",
+			},
+			dontWant: []string{"TERM", "COLORTERM"},
+		},
+		{
+			name: "interactive set beats inherited TERM",
+			marker: `{
+				"core": ["HOME"],
+				"set": {"TERM": "dumb"}
+			}`,
+			environ: []string{
+				"HOME=/home/sandbox",
+				"TERM=xterm-256color",
+			},
+			interactive: true,
+			wantSet: map[string]string{
+				"HOME": "/home/sandbox",
+				"TERM": "dumb",
+			},
+		},
+		{
+			name: "non-interactive drops TERM and COLORTERM unless inherited",
+			marker: `{
+				"core": ["HOME"]
+			}`,
+			environ: []string{
+				"HOME=/home/sandbox",
+				"TERM=xterm-256color",
+				"COLORTERM=truecolor",
+			},
+			interactive: false,
+			wantSet: map[string]string{
+				"HOME": "/home/sandbox",
+			},
+			dontWant: []string{"TERM", "COLORTERM"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BuildKeepEnvInteractive([]byte(tt.marker), tt.environ, tt.interactive)
+			gotMap := make(map[string]string)
+			for _, entry := range got {
+				parts := strings.SplitN(entry, "=", 2)
+				if len(parts) == 2 {
+					gotMap[parts[0]] = parts[1]
+				}
+			}
+
+			for k, wantVal := range tt.wantSet {
+				if val, ok := gotMap[k]; !ok || val != wantVal {
+					t.Errorf("gotMap[%s] = %q (exists=%v), want %q", k, val, ok, wantVal)
+				}
+			}
+
+			for _, dont := range tt.dontWant {
+				if _, ok := gotMap[dont]; ok {
+					t.Errorf("gotMap should NOT contain %s, but got %q", dont, gotMap[dont])
+				}
+			}
+		})
+	}
+}
+
 func TestInvariant_WorkloadGetsOnlyExplicitEnv(t *testing.T) {
 	cmd := reexec.Command(GuestCommandName, "/bin/sh", "-c",
 		`printf "%s|%s|%s" "$HOST_LEAK" "$ALLOWED_VAR" "$SET_VAR"`)

@@ -158,6 +158,59 @@ func TestGuestCommand_PTYForwardedOnTTY(t *testing.T) {
 	}
 }
 
+// TestGuestCommand_PTYInteractiveEnvForwarded verifies that in interactive PTY mode,
+// TERM and COLORTERM are forwarded to the workload child.
+func TestGuestCommand_PTYInteractiveEnvForwarded(t *testing.T) {
+	master, slave, err := openPTY()
+	if err != nil {
+		t.Fatalf("openPTY: %v", err)
+	}
+	defer master.Close()
+	defer slave.Close()
+
+	cmd := reexec.Command(GuestCommandName, "/bin/sh", "-c",
+		`printf "%s|%s|%s|%s" "$TERM" "$COLORTERM" "$LANG" "$LEAK"`)
+	cmd.Stdin = slave
+	cmd.Stdout = slave
+	cmd.Stderr = slave
+	cmd.Env = []string{
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+		"LANG=en_US.UTF-8",
+		"LEAK=leak_val",
+		EnvKeepMarkerName + `={"core":["HOME"]}`,
+	}
+
+	var masterOut bytes.Buffer
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 64)
+		for {
+			_ = master.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			n, rerr := master.Read(buf)
+			if n > 0 {
+				masterOut.Write(buf[:n])
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	err = cmd.Run()
+	slave.Close()
+	<-readDone
+
+	if err != nil {
+		t.Logf("guest run error: %v", err)
+	}
+	got := masterOut.String()
+	if !strings.Contains(got, "xterm-256color|truecolor|en_US.UTF-8|") {
+		t.Errorf("workload did not receive expected interactive env: got %q, want 'xterm-256color|truecolor|en_US.UTF-8|'", got)
+	}
+}
+
 // TestPTY_WindowSizePropagate verifies that setWindowSize does not error when
 // called on the master PTY (sanity check for TIOCSWINSZ path).
 func TestPTY_WindowSizePropagate(t *testing.T) {
