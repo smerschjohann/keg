@@ -230,11 +230,16 @@ type LogCfg struct {
 }
 
 // SecretSource is one secret_sources entry (mechanism lives in user config).
+// Always (default false) makes the secret available in EVERY sandbox, even
+// when no repo declares the need — see CONCEPT.md §4.7.
+// If Always is true the source is only reachable via secret_sources, never
+// via the host-file secrets map (that map carries no always flag).
 type SecretSource struct {
 	Cmd            []string `yaml:"cmd"`
 	Interval       Duration `yaml:"interval"`
 	Timeout        Duration `yaml:"timeout"`
 	OnRefreshError string   `yaml:"on_refresh_error"` // keep (default) | fail
+	Always         bool     `yaml:"always"`           // inject into every sandbox
 }
 
 // RepoOverride is the per-target-repo section of the user config. It shares
@@ -246,6 +251,10 @@ type RepoOverride struct {
 	Mounts  []Mount           `yaml:"mounts"`
 	Network Network           `yaml:"network"`
 	Env     EnvSpec           `yaml:"env"`
+	// Secrets is an additional need list for this target repo: entries are
+	// unioned with the repo's own .keg.yaml `secrets:` declarations and
+	// must be resolvable via the user config's secret_sources / secrets map.
+	Secrets []SecretRef `yaml:"secrets"`
 }
 
 // RunnerOverride carries only the additive allowlist parts.
@@ -266,6 +275,11 @@ type User struct {
 	Security      Security                `yaml:"security"`
 	Log           LogCfg                  `yaml:"log"`
 	SecretSources map[string]SecretSource `yaml:"secret_sources"`
+	// InjectNeeds carries the secret need refs contributed by the matched
+	// repos[] override after MergeUsers. It is never parsed directly from the
+	// global YAML (the global `secrets:` key is the host-file mechanism map);
+	// MergeUsers fills it from the per-repo RepoOverride.Secrets list.
+	InjectNeeds []SecretRef `yaml:"-"`
 	// Secrets maps secret names to existing HOST FILES: a repo may
 	// reference the name via its `secrets:` list and the file is mounted
 	// read-only at /run/secrets/<name>. Paths support ~ and $VAR expansion.
@@ -399,14 +413,21 @@ func (u *User) validate() error {
 			return fmt.Errorf("user config: secret %q defined in both secret_sources and secrets (choose one origin)", name)
 		}
 	}
-	for name, src := range u.SecretSources {
-		switch src.OnRefreshError {
+	for name, dst := range u.SecretSources {
+		switch dst.OnRefreshError {
 		case "", "keep", "fail":
 		default:
 			return fmt.Errorf("user config: secret_sources[%s]: on_refresh_error must be keep|fail", name)
 		}
-		if len(src.Cmd) == 0 {
+		if len(dst.Cmd) == 0 {
 			return fmt.Errorf("user config: secret_sources[%s]: cmd required", name)
+		}
+	}
+	for repoPat, override := range u.Repos {
+		for _, ref := range override.Secrets {
+			if ref.Name == "" {
+				return fmt.Errorf("user config: repos[%s].secrets: entry with empty name", repoPat)
+			}
 		}
 	}
 	for name, src := range u.VarsFromExec {

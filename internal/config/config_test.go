@@ -197,6 +197,67 @@ secret_sources:
 	}
 }
 
+func TestParseUser_SecretSourceAlways(t *testing.T) {
+	user, err := ParseUser([]byte(`
+secret_sources:
+  ai_token:
+    cmd: [genkey, my-instance, "60"]
+    always: true
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	src, ok := user.SecretSources["ai_token"]
+	if !ok {
+		t.Fatal("secret source ai_token missing")
+	}
+	if !src.Always {
+		t.Errorf("source.Always = false, want true (always-inject flag)")
+	}
+}
+
+func TestParseUser_RepoOverrideSecretsNeed(t *testing.T) {
+	user, err := ParseUser([]byte(`
+repos:
+  "/home/coder/dev/llmgate":
+    secrets:
+      - name: ai_secret_key
+      - name: db_password
+        env: DB_PASSWORD_FILE
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	override, ok := user.Repos["/home/coder/dev/llmgate"]
+	if !ok {
+		t.Fatal("repo override missing")
+	}
+	if len(override.Secrets) != 2 {
+		t.Fatalf("override.Secrets = %+v, want 2 refs", override.Secrets)
+	}
+	if override.Secrets[0].Name != "ai_secret_key" {
+		t.Errorf("Secrets[0].Name = %q, want ai_secret_key", override.Secrets[0].Name)
+	}
+	if override.Secrets[1].Env != "DB_PASSWORD_FILE" {
+		t.Errorf("Secrets[1].Env = %q, want DB_PASSWORD_FILE", override.Secrets[1].Env)
+	}
+}
+
+func TestValidateUser_RepoOverrideEmptySecretName(t *testing.T) {
+	_, err := ParseUser([]byte(`
+repos:
+  "/repo":
+    secrets:
+      - name: ""
+`))
+	if err == nil {
+		t.Fatal("repo override secret with empty name must be rejected")
+	}
+	if !strings.Contains(err.Error(), "secrets") {
+		t.Errorf("error %q must mention secrets", err)
+	}
+}
+
 func TestParseUser_RejectsUnknownField(t *testing.T) {
 	_, err := ParseUser([]byte("paths:\n  storage_basee: /x\n"))
 	if err == nil {

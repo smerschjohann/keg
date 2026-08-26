@@ -686,3 +686,82 @@ func TestBuildArgs_SecretPathBindsWithoutFetchedDir(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildPlan_AlwaysSecretInjectedWithoutRepoNeed pins that a secret
+// source flagged with `always: true` is injected into every sandbox, even
+// when no .keg.yaml declares the need.
+func TestBuildPlan_AlwaysSecretInjectedWithoutRepoNeed(t *testing.T) {
+	repoDir := t.TempDir()
+	// Repo declares NO secrets at all.
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte("version: \"1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "genkey")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho -n always-token\n"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	userYAML := `
+secret_sources:
+  ai_secret_key:
+    cmd: ["` + script + `"]
+    always: true
+`
+	userFile := filepath.Join(t.TempDir(), "user-config.yaml")
+	if err := os.WriteFile(userFile, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, _, err := BuildPlan(repoDir, "", userFile, OverlayPlain, "", OverlayPlain, "", "test-always-secret")
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if plan.SecretDir == "" {
+		t.Fatalf("plan.SecretDir is empty: always source must be mounted for every repo")
+	}
+	if len(plan.Secrets) != 1 || plan.Secrets[0].Name != "ai_secret_key" {
+		t.Errorf("plan.Secrets = %+v, want [ai_secret_key]", plan.Secrets)
+	}
+}
+
+// TestBuildPlan_RepoOverrideSecretNeed pins that a `secrets:` need list in
+// the matched repos[] override of the user config adds secrets to the plan,
+// with the env mapping applied.
+func TestBuildPlan_RepoOverrideSecretNeed(t *testing.T) {
+	repoDir := t.TempDir()
+	// Repo .keg.yaml declares nothing; the need comes from the user
+	// config's repos[] override matching this path.
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte("version: \"1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "gen-db")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho -n db-pass\n"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	userYAML := `
+secret_sources:
+  db_password:
+    cmd: ["` + script + `"]
+repos:
+  "` + repoDir + `":
+    secrets:
+      - name: db_password
+        env: DB_PASSWORD_FILE
+`
+	userFile := filepath.Join(t.TempDir(), "user-config.yaml")
+	if err := os.WriteFile(userFile, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, _, err := BuildPlan(repoDir, "", userFile, OverlayPlain, "", OverlayPlain, "", "test-repo-override-secret")
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if len(plan.Secrets) != 1 || plan.Secrets[0].Name != "db_password" {
+		t.Errorf("plan.Secrets = %+v, want [db_password]", plan.Secrets)
+	}
+	if plan.EnvSet["DB_PASSWORD_FILE"] != "/run/secrets/db_password" {
+		t.Errorf("plan.EnvSet[DB_PASSWORD_FILE] = %q, want /run/secrets/db_password", plan.EnvSet["DB_PASSWORD_FILE"])
+	}
+}

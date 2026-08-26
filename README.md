@@ -251,6 +251,7 @@ secret_sources:
     interval: 30s
     timeout: 5s
     on_refresh_error: keep
+    # always: true   # optional: Secret in JEDE Sandbox einspielen
 
 # Bestehende Host-Dateien als Secrets bereitstellen (ro-bind nach
 # /run/secrets/<name>; ~ und $VAR werden expandiert). Repo deklariert
@@ -258,6 +259,14 @@ secret_sources:
 # bereitgestellt werden, ohne sie zu kopieren.
 secrets:
   github_pat: "~/.config/gh/hosts.yml"
+
+# Per-Ziel-Repo zusätzliche Secret-Bedarfe (ver-einigt mit den `secrets:`-
+# Deklarationen der Repo-`.keg.yaml`): Das Repo selbst bleibt unberührt.
+repos:
+  "/home/code/agent-repo":
+    secrets:
+      - name: ai_secret_key
+        env: AI_SECRET_KEY
 
 # Sicherheits- und LSM-Einstellungen
 security:
@@ -267,6 +276,40 @@ security:
 log:
   audit_file: "~/.config/keg/audit.log"
 ```
+
+### Secrets aktivieren (drei Wege)
+
+Wer ein Secret liefert (Mechanismus) und *welches* einlaufen soll (Bedarf)
+sind getrennt. Ein in der User-Config definiertes Secret wird erst gemountet
+(`/run/secrets/<name>`), wenn eine der folgenden Quellen den Bedarf stellt:
+
+1. **Repo-`.keg.yaml`** (portabel, versioniert):
+   ```yaml
+   secrets:
+     - name: ai_secret_key
+       env: AI_SECRET_KEY
+   ```
+2. **`repos[<match>].secrets` in der User-Config** (nur für dieses Ziel-Repo,
+   ohne das Repo anzufassen) — wird mit der Repo-Deklaration vereinigt:
+   ```yaml
+   repos:
+     "/home/code/agent-repo":
+       secrets:
+         - name: ai_secret_key
+           env: AI_SECRET_KEY
+   ```
+3. **`always: true` in `secret_sources`** (global für **jede** Sandbox):
+   ```yaml
+   secret_sources:
+     ai_secret_key:
+       cmd: ["genkey", "keg", "1500"]
+       interval: 10m
+       always: true        # -> /run/secrets/ai_secret_key in JEDER Sandbox
+   ```
+
+Der `name` muss jeweils in `secret_sources` oder in der `secrets:`-Map der
+User-Config existieren, sonst harter Fehler vor Start. `env:` setzt zusätzlich
+`<ENV> = /run/secrets/<name>`.
 
 ---
 

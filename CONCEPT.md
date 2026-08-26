@@ -419,6 +419,7 @@ dem Host**.
       timeout: 10s
       on_refresh_error: keep   # keep = letzter guter Wert bleibt (Default)
                                # fail = Sandbox wird beendet
+      always: true          # optional: in JEDE Sandbox einspielen (s. u.)
   ```
   Alternativ (oder ergänzend) erlaubt die User-Config, **bestehende
   Host-Dateien direkt als Secret bereitzustellen**:
@@ -444,6 +445,43 @@ dem Host**.
   Referenzierte `name`s müssen in `secret_sources` oder in der `secrets`
   -Map (Host-Datei) der User-Config existieren, sonst harter Validierungsfehler
   vor Start.
+
+#### Wie wird ein Secret „aktiviert“? (drei Wege)
+
+Der Bedarf (welche Secrets die Sandbox erhält) und der Mechanismus (woher der
+Wert stammt) sind bewusst getrennt. Ein in der User-Config definiertes Secret
+wird erst dann gemountet, wenn *irgendeine* der folgenden Quellen es verlangt:
+
+1. **Repo-`.keg.yaml`** — portabel, da versioniert und mitgeteilt:
+   ```yaml
+   secrets:
+     - name: ai_token
+       env: AI_TOKEN_FILE
+   ```
+2. **`repos[<match>].secrets` in der User-Config** — maschinenlokal für genau
+   dieses Ziel-Repo, ohne das Repo anfassen zu müssen. Die Liste wird als
+   *Zusatzbedarf* mit den Deklarationen der Repo-YAML vereinigt:
+   ```yaml
+   repos:
+     "/home/code/agent-repo":
+       secrets:
+         - name: ai_token
+           env: AI_TOKEN_FILE
+   ```
+3. **`always: true` in `secret_sources`** — global: das Secret wird in **jede**
+   Sandbox auf dieser Maschine eingespielt, unabhängig davon, ob irgendeine
+   Repo-Konfiguration den Bedarf deklariert. Ideal für maschinenweit gültige
+   Zugangs-Tokens (genkey, OAuth-Refresh …). Ein `always`-Eintrag wird wie die
+   übrigen Quellen refresht und landet unter `/run/secrets/<name>`; die
+   `secrets:`-Map (Host-Dateien) kennt kein `always`.
+
+   ```yaml
+   secret_sources:
+     ai_secret_key:
+       cmd: [genkey, keg, "1500"]
+       interval: 10m
+       always: true        # -> /run/secrets/ai_secret_key in JEDER Sandbox
+   ```
 
 #### Ablauf & Technik
 

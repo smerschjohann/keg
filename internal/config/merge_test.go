@@ -256,3 +256,30 @@ env:
 		t.Errorf("env.set = %v", got.Env.Set)
 	}
 }
+
+func TestMergeUsers_RepoOverrideSecretNeedsAdded(t *testing.T) {
+	u := userFromYAML(t, `secret_sources:
+  ai_token:
+    cmd: [genkey, i, "60"]
+repos:
+  "/home/coder/dev/llmgate":
+    secrets:
+      - name: ai_token
+      - name: db_password
+        env: DB_PASSWORD_FILE
+`)
+	got := MatchRepo(u, "/home/coder/dev/llmgate")
+
+	want := []string{"ai_token", "db_password"}
+	if len(got.InjectNeeds) != len(want) {
+		t.Fatalf("InjectNeeds = %+v, want %v", got.InjectNeeds, want)
+	}
+	for i, w := range want {
+		if got.InjectNeeds[i].Name != w {
+			t.Errorf("InjectNeeds[%d].Name = %q, want %q", i, got.InjectNeeds[i].Name, w)
+		}
+	}
+	if got.InjectNeeds[1].Env != "DB_PASSWORD_FILE" {
+		t.Errorf("InjectNeeds[1].Env = %q, want DB_PASSWORD_FILE", got.InjectNeeds[1].Env)
+	}
+}

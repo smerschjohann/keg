@@ -22,6 +22,7 @@ func MergeUsers(global, override *User) *User {
 	out.Runner.ExtraExact = union(global.Runner.ExtraExact, override.Runner.ExtraExact)
 	out.Runner.ExtraPrefixes = union(global.Runner.ExtraPrefixes, override.Runner.ExtraPrefixes)
 	out.Vars = mergeStringMaps(global.Vars, override.Vars)
+	out.InjectNeeds = append(slices.Clone(global.InjectNeeds), override.InjectNeeds...)
 	out.Mounts = append(slices.Clone(global.Mounts), override.Mounts...)
 	out.Network = mergeNetwork(global.Network, override.Network)
 	out.Env = mergeEnv(global.Env, override.Env)
@@ -146,12 +147,13 @@ func MatchRepo(user *User, repoPath string) *User {
 	}
 	override := user.Repos[chosen]
 	return MergeUsers(out, &User{
-		Paths:   derefPaths(override.Paths),
-		Runner:  derefRunner(override.Runner),
-		Vars:    override.Vars,
-		Mounts:  override.Mounts,
-		Network: override.Network,
-		Env:     override.Env,
+		Paths:       derefPaths(override.Paths),
+		Runner:      derefRunner(override.Runner),
+		Vars:        override.Vars,
+		Mounts:      override.Mounts,
+		Network:     override.Network,
+		Env:         override.Env,
+		InjectNeeds: override.Secrets,
 	})
 }
 

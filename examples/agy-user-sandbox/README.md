@@ -9,6 +9,12 @@ Dieses Beispiel demonstriert, wie ein Benutzer **`agy` vollständig isoliert inn
 
 `keg` merged diese Freigaben beim Start sicher hinzu. `agy` läuft somit **vollständig gesandboxt** unter unprivilegierten Namespaces und Landlock-LSM-Schutz.
 
+> **Secrets-Beispiel:** `user_config.yaml` enthält zusätzlich einen `secret_sources`
+> Eintrag `ai_secret_key` mit `always: true` (genkey), der in **jeder** Sandbox als
+> `/run/secrets/ai_secret_key` landet — ganz ohne Deklaration im Repo. Kommentierter
+> `repos:`-Block zeigt den per-Ziel-Repo-Bedarf. Details zu `always:`/`repos[].secrets`
+> siehe [README.md §Secrets aktivieren](../../README.md).
+
 ---
 
 ## 1. Konfiguration

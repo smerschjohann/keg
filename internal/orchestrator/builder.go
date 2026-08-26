@@ -178,9 +178,29 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	// Secrets: resolve every requested name via the user config — either
 	// as an existing HOST FILE to bind-mount (secrets map) or as a dynamic
 	// secret_sources command fetched before launch and refreshed later.
-	if len(repo.Secrets) > 0 {
+	// The need list is the union of:
+	//   1. the repo's own .keg.yaml `secrets:` declarations,
+	//   2. the per-repo `secrets:` need list from the matched repos[]
+	//      override (effective.InjectNeeds),
+	//   3. every secret_sources entry flagged `always: true` (global
+	//      injection into every sandbox, independent of any repo config).
+	var secretNeeds []config.SecretRef
+	secretNeeds = append(secretNeeds, repo.Secrets...)
+	secretNeeds = append(secretNeeds, effective.InjectNeeds...)
+	seen := make(map[string]bool, len(secretNeeds))
+	for _, n := range secretNeeds {
+		seen[n.Name] = true
+	}
+	for name, src := range effective.SecretSources {
+		if src.Always && !seen[name] {
+			seen[name] = true
+			secretNeeds = append(secretNeeds, config.SecretRef{Name: name})
+		}
+	}
+
+	if len(secretNeeds) > 0 {
 		var fetchRefs []config.SecretRef
-		for _, ref := range repo.Secrets {
+		for _, ref := range secretNeeds {
 			if rawPath, ok := effective.Secrets[ref.Name]; ok {
 				hostPath, err := config.ExpandPath(rawPath)
 				if err != nil {
@@ -214,7 +234,7 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 			plan.Secrets = fetchRefs
 			plan.SecretSources = effective.SecretSources
 		}
-		for _, s := range repo.Secrets {
+		for _, s := range secretNeeds {
 			if s.Env != "" {
 				plan.EnvSet[s.Env] = "/run/secrets/" + s.Name
 			}

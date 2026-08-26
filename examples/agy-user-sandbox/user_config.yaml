@@ -45,3 +45,26 @@ network:
 
 security:
   landlock: auto
+
+# ── Secrets ─────────────────────────────────────────────────────────────
+# Beispiel: ein maschinenweit gültiger API-Key, der in JEDER Sandbox landet
+# (always: true) — unabhängig von der Repo-.keg.yaml. /home/coder/.local/bin/genkey
+# erzeugt ein kurzlebiges Token für die Instanz 'keg', gültig 1500 s,
+# das jailsbox alle 10 min erneuert.
+secret_sources:
+  ai_secret_key:
+    # Aufruf: genkey <name_of_keg_instance> <seconds_until_token_is_invalidated>
+    cmd: ["/home/coder/.local/bin/genkey", "keg", "1500"]
+    interval: 10m
+    timeout: 5s
+    on_refresh_error: keep
+    always: true            # -> /run/secrets/ai_secret_key in JEDER Sandbox
+
+# Alternativ: Secret-Bedarf nur für ein bestimmtes Ziel-Repo, ohne das Repo
+# anzufassen. Ein Referenzierter Name muss in secret_sources oder in der
+# secrets:-Map existieren, sonst harter Validierungsfehler vor Start.
+# repos:
+#   "/home/coder/dev/llmgate":
+#     secrets:
+#       - name: ai_secret_key
+#         env: AI_SECRET_KEY
