@@ -3,10 +3,12 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/runner"
 )
 
 // TestMain routes guest invocations of THIS test binary into the sandbox
@@ -16,6 +18,14 @@ import (
 func TestMain(m *testing.M) {
 	if orchestrator.InitGuestDispatch() {
 		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "delegate" {
+		conn, err := runner.Dial()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "keg delegate: %v\n", err)
+			os.Exit(runner.CodeNoRunner)
+		}
+		os.Exit(runner.Exec(conn, os.Args[2:], "", os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())
 }

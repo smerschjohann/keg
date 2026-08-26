@@ -15,21 +15,7 @@ import (
 // TestSandboxDelegation is the WP-M5 §7.2 DoD test (the `just delegate
 // container-build` replacement): whitelisted tasks run on the HOST, live
 // output streams back, exit codes and hook suppression carry over.
-//
-// SKIP-GRUND (sichtbar, nie stumm): Der End-to-End-Lauf hängt aktuell im
-// Gast-Bridge-Accept — die Unix-Socket-Verbindung des Workloads erreicht
-// Accept() im residenten Guest nicht (Diagnose-Stände siehe
-// IMPLEMENTATION_PLAN.md, Abschnitt Umsetzungsnotizen M5). Die komplette
-// Protokoll-/Exec-/Verdrahtungslogik ist unit-getestet und grün
-// (internal/runner: Whitelist, Server, Client, Bridge über echte
-// Socketpairs inkl. echter Exec-Läufe); offen bleibt ausschließlich die
-// Zusammenschaltung mit bwrap+netns in diesem Test. CI darf dadurch
-// nicht rot stehen; der Test wird reaktiviert, sobald der Accept-Stall
-// behoben ist.
 func TestSandboxDelegation(t *testing.T) {
-	t.Skip("WP-M5 e2e: guest-bridge accept stall under bwrap/netns " +
-		"(single-channel wiring open) — see IMPLEMENTATION_PLAN.md M5 notes")
-
 	repo := t.TempDir()
 	hooksDir := t.TempDir() // keg-owned, must stay EMPTY
 
