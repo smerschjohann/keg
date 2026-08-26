@@ -6,7 +6,10 @@
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
 > Stand: **Phase 0 + M1–M4 vollständig** (inkl. Transparent-Modus und
-> Port-Rückkanal), M5 teilweise (Details je Abschnitt).
+> Port-Rückkanal), M5 weitgehend umgesetzt: Whitelist-Engine, Runner-
+> Server, Delegate-Client, Gast-Bridge und CLI-Verdrahtung sind grün
+> getestet; offen ist der End-to-End-Integrationstest (Accept-Stall,
+> siehe Umsetzungsnotizen M5).
 > Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -554,7 +557,44 @@ auf `127.0.0.1:<port>` antwortet.
 
 ## 7. WP-M5 — Delegation (Kanal C)
 
-### 7.1 Whitelist-Engine
+**Status:** 🔶 §7.1 vollständig erledigt; §7.2 implementiert und über
+Unit-/CLI-Tests abgedeckt — es fehlt ausschließlich der bwrap-basierte
+End-to-End-Test (`TestSandboxDelegation`, aktuell sichtbar geskippt:
+Guest-Bridge-Accept-Stall, Notizen am Abschnittsende).
+
+**Umgesetzt:**
+
+* Whitelist-Engine `internal/runner`: Klassen exact/prefix/raw,
+  fünfstufiger Raw-Matcher nach CONCEPT.md §4.5 (globale Optionen mit/
+  ohne Wert inkl. `--opt=value` nur mit Freigabe),
+  `forbidden_args_matching` als URL-tauglicher Glob (`*`/`?` spannen
+  auch `/`) oder `/Regex/`; User-`extra_*` unionieren
+  (`TestNewEngine_MergesUserExtrasAsUnion`); Invariante
+  `TestInvariant_DelegationDenyByDefault`.
+* Runner-Server: ein muxado-Stream pro Job; Request = ein
+  Length-Prefix-JSON-Frame mit base64-codierten Argumenten
+  (mehrzeilige Commit-Messages überleben die Übertragung unverändert);
+  stdout/stderr werden live als Frames gestreamt, danach folgt der
+  Exit-Marker bzw. `denied`/`error`. Jobs laufen in eigener Prozessgruppe
+  und sterben mit dem Sandbox-Kontext (`WaitDelay` reapt Nachzügler).
+* Pfad-Jail via `filepath.Rel` gegen den Repo-Root; absolute Pfade,
+  Traversale und nicht existierende Verzeichnisse ⇒ Fail-Closed-Fehler
+  (`TestServer_PathJailBlocksEscapes`).
+* Git-Hook-Unterdrückung: raw-git-Jobs bekommen `-c core.hooksPath=
+  <leeres keg-Dir>` vorangestellt
+  (`TestServer_SuppressesGitHooksForRawGitJobs`).
+* Verdrahtung: `buildRunPlan` übergibt `delegated_tasks` + User-Extras +
+  bestand-kompatibles `RUNNER_WHITELIST`-Env an die Engine, setzt den
+  `KEG_RUNNER`-Marker, mountet `/run` (tmpfs) und legt das leere
+  Hooks-Dir pro Instanz an; `keg run` serviert `StartRunner` auf
+  Kanal C bis `Sandbox.Close`. Guest bindet `/run/keg/runner.sock`
+  (fd 5 → Bridge → Unix-Socket). CLI: `keg delegate <argv…>` mappt
+  Job-Code verbatim / 126 verweigert / 125 Protokollfehler /
+  127 Runner fehlt (In-process-CLI-Tests decken alle vier ab).
+  BuildArgs nimmt `/.keg` in PATH auf, sobald das Binary gebunden
+  wird.
+
+### 7.1 Whitelist-Engine ✅
 
 * Klassen exact/prefix/raw; Raw-Matcher als totale Funktion
   `MatchRaw(argv, Rule) Decision` mit den 5 Schritten aus CONCEPT.md §4.5
@@ -582,7 +622,36 @@ auf `127.0.0.1:<port>` antwortet.
 schreibt Marker + Exit-Code; Ablehnung ⇒ 126 mit Grund; mehrzeilige
 Commit-Messages via b64.
 
-**DoD:** `sandbox.just`-Muster funktioniert unverändert (`CODE_SANDBOX`).
+**DoD:** siehe Status oben — Unit-seitig vollständig nachgewiesen;
+verbleibend ist die Reaktivierung von `TestSandboxDelegation`.
+
+#### Umsetzungsnotizen M5 (empirisch verifiziert)
+
+1. **Zweistufige Kanal-C-Topologie:** Dem Sandbox-Workload erscheint
+   Delegation als simpler Unix-Socket (`/run/keg/runner.sock`,
+   LENGTH-Prefix-JSON direkt über die Verbindung). Die Verbindung wird im
+   residenten Guest byte-transparent auf einen eigenen muxado-Stream des
+   fd5-Socketpairs gepumpt — getrennte Schichten wie bei Kanälen A/E.
+2. **b64-Argumentframing:** Argumente werden Liste-weise base64-codiert
+   (`EncodeStrings`/`DecodeStrings`); Newlines, Quotes und `$` in
+   Commit-Messages erreichen Host-exec unangetastet (getestet).
+3. **muxado-Accept wacht nur beim eigenen Session-Close** (bekannt aus
+   M4): ServeSession/Bridge-Stop-Kode schließt deshalb immer zuerst die
+   eigene Session.
+4. **OFFEN — Accept-Stall im echten Lauf:** Im Unit-E2E (Bridge+Server+
+   Client über AF_UNIX-Socketpairs im Testprozess) funktioniert die
+   komplette Kette inkl. Exec. In der echten Sandbox dialt der Workload
+   erfolgreich zum guestgebundenen Socket (`[ -S ]` positiv), aber
+   `ln.Accept()` im residenten Guest liefert die Verbindung nicht;
+   auf dem Kanal-Ende des Orchestrators arriveiert kein Stream.
+   Heuristik für die Aufklärung: erst Stage-/Scrub-Hygiene von fd 5 in
+   bwrap+netns verifizieren (`netns.go` reicht channelFiles bereits
+   durch; Verdacht doppelte `os.NewFile`-Wraps wie in M3-Notiz 4), dann
+   Workload-seitigen Dial über ein minimalen `/bin/sh`-Repro ohne
+   unseren Client isolieren.
+5. **RUNNER_WHITELIST bleibt Kompatibilitäts-Oberfläche:** komma-
+   separierte exact-Tasks aus dem Host-Env, Trim vor Merge, wirken
+   zusätzlich zur Repo-Config (`TestBuildRunPlan_RunnerWhitelistEnvCompat`).
 
 ---
 
@@ -692,7 +761,8 @@ nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
-Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4).
+Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 §7.1 ✅, §7.2 grün
+bis auf e2e-Reaktivierung** (Accept-Stall, Notizen M5).
 Erster nutzbarer Schnitt: isolierte Shell mit Overlay-Modi, kontrolliertem
 HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf :53
 (Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
