@@ -1,0 +1,16 @@
+# user_config.yaml (~/.config/keg/config.yaml oder übergeben mit --user-config)
+#
+# Der Benutzer autorisiert die Ausführung von 'agy' auf seinem Host für die Sandbox,
+# ohne dass das Repository agy in seiner .keg.yaml konfigurieren muss.
+
+paths:
+  storage_base: "/var/lib/containers/storage/sandbox"
+  tmp_base: "/tmp"
+
+runner:
+  # Erlaubt der Sandbox, das just-Rezept 'agy' auf dem Host auszuführen:
+  extra_prefixes:
+    - "agy"
+
+security:
+  landlock: auto

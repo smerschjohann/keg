@@ -1,0 +1,9 @@
+version: "1"
+
+# Dieses Repository enthält KEINE agy-Mounts und KEINE Google-Netzwerkfreigaben.
+# Der Aufruf von agy wird rein über die lokale Benutzer-Konfiguration auf dem Host freigegeben.
+
+delegated_tasks:
+  exact:
+    - build
+    - test

@@ -31,8 +31,9 @@ func delegateAction(argv []string) int {
 // exit code IS the contract with `just delegate` recipes.
 func delegateCommand() *cli.Command {
 	return &cli.Command{
-		Name:  "delegate",
-		Usage: "run a whitelisted task on the HOST outside the sandbox (126 = declined)",
+		Name:            "delegate",
+		Usage:           "run a whitelisted task on the HOST outside the sandbox (126 = declined)",
+		SkipFlagParsing: true,
 		Description: "Runs inside the sandbox only. Example Justfile recipe:\n" +
 			"  if [ \"{{in_sandbox}}\" = \"1\" ]; then just delegate container-build; fi",
 		Action: func(_ context.Context, c *cli.Command) error {

@@ -1,19 +1,13 @@
 version: "1"
 
-# Default-Variablen für Mount-Pfade (können in local-config.yaml bzw.
-# ~/.config/keg/config.yaml überschrieben werden):
-vars:
-  gemini_config_dir: "~/.gemini"
-  agy_bin_dir: "~/.local/bin"
-
-# Mounts für Google Antigravity (agy):
-# - gemini_config_dir: Google accounts, credentials, settings, state
-# - agy_bin_dir: agy CLI binary executable
+# Mounts required for Google Antigravity (agy):
+# - ~/.gemini: Google accounts, credentials, settings, state
+# - ~/.local/bin: agy CLI binary executable
 mounts:
-  - src: "{{ .Vars.gemini_config_dir }}"
+  - src: ~/.gemini
     dest: /home/sandbox/.gemini
     mode: rw
-  - src: "{{ .Vars.agy_bin_dir }}"
+  - src: ~/.local/bin
     dest: /home/sandbox/.local/bin
     mode: ro
 

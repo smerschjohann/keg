@@ -238,7 +238,8 @@ log:
 ## 5. Beispiele
 
 - **[`examples/pi-agent`](file:///home/coder/dev/keg/examples/pi-agent/README.md):** Vollständiges Beispiel für einen KI-Agenten mit `golang`-Preset, dynamischer `genkey`-Secret-Generierung nach `/run/secrets/ai_secret_key` und `just test-playwright`-Delegation.
-- **[`examples/agy`](file:///home/coder/dev/keg/examples/agy/README.md):** Ausführung von Google Antigravity (`agy`) in einer Zero-Trust-Sandbox mit `mode: transparent`, DNS-Forwarding (`8.8.8.8:53`) für `*.googleapis.com` und direktem Zugriff auf `daily-cloudcode-pa.googleapis.com` (ohne HTTP-Proxy).
+- **[`examples/agy`](file:///home/coder/dev/keg/examples/agy/README.md):** **Projekt-Konfiguration:** Ausführung von `agy` in der Sandbox mit `mode: transparent`, DNS-Forwarding für `*.googleapis.com` und direktem Zugriff auf `daily-cloudcode-pa.googleapis.com` (ohne HTTP-Proxy).
+- **[`examples/agy-user-config`](file:///home/coder/dev/keg/examples/agy-user-config/README.md):** **Nutzer-Konfiguration:** Sauberes Repository ohne Google-Freigaben; der Aufruf von `agy` wird rein über die lokale `user_config.yaml` (`runner.extra_prefixes: ["agy"]`) per Host-Delegation freigegeben.
 
 ---
 

@@ -1,0 +1,15 @@
+import 'sandbox.just'
+
+default:
+    @just --list
+
+# agy: Führt agy aus (delegiert innerhalb der Sandbox automatisch an den Host)
+agy prompt="sag hi":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{in_sandbox}}" = "1" ]; then
+        echo "[Sandbox] Delegiere 'just agy \"{{prompt}}\"' transparent an den Host..."
+        just delegate agy "{{prompt}}"
+        exit $?
+    fi
+    agy -p "{{prompt}}"

@@ -1,6 +1,6 @@
-# Google Antigravity (`agy`) in keg
+# Google Antigravity (`agy`) — Projekt-Konfiguration
 
-Dieses Beispiel demonstriert die Ausführung des Google Antigravity Agenten (`agy`) innerhalb einer hermetischen **keg**-Sandbox.
+Dieses Beispiel demonstriert die Ausführung des Google Antigravity Agenten (`agy`) innerhalb einer hermetischen **keg**-Sandbox, bei der alle Freigaben und Netzwerk-Regeln **direkt im Projekt** ([`.keg.yaml`](file:///home/coder/dev/keg/examples/agy/.keg.yaml)) konfiguriert sind.
 
 ---
 
@@ -13,6 +13,9 @@ network:
   mode: transparent
   dns:
     enabled: true
+    hosts:
+      lh3.googleusercontent.com: 172.217.113.4
+      accounts.google.com: 172.217.113.4
   sni_domains:
     - daily-cloudcode-pa.googleapis.com
     - oauth2.googleapis.com
@@ -35,7 +38,7 @@ network:
 
 ### DNS-Auflösung (CoreDNS-Äquivalent)
 
-Die DNS-Anfragen für `*.googleapis.com` werden über den keg-DNS-Resolver auf Loopback `:53` abgefangen, gegen die Whitelist validiert und an den Upstream-DNS weitergeleitet (entspricht dem CoreDNS-Forwarding):
+Die DNS-Anfragen für `*.googleapis.com` werden über den keg-DNS-Resolver auf Loopback `:53` abgefangen, gegen die Whitelist validiert und an den Upstream-DNS weitergeleitet:
 
 ```text
 googleapis.com:53 {
@@ -47,35 +50,18 @@ googleapis.com:53 {
 
 ---
 
-## 2. Lokale Konfiguration ([`local-config.yaml`](file:///home/coder/dev/keg/examples/agy/local-config.yaml))
+## 2. Mounts & Authentifizierung
 
-Statt maschinenspezifische Pfade direkt im Repository zu verankern, nutzt `.keg.yaml` Template-Variablen (`gemini_config_dir`, `agy_bin_dir`). Die tatsächlichen Host-Pfade und Runner-Freigaben können in der lokalen Konfiguration (`~/.config/keg/config.yaml` bzw. `--user-config local-config.yaml`) definiert werden:
+Damit `agy` innerhalb der Sandbox auf bestehende OAuth-Tokens und das Binary zugreifen kann:
 
 ```yaml
-# local-config.yaml
-paths:
-  storage_base: "/var/lib/containers/storage/sandbox"
-  tmp_base: "/tmp"
-
-# 1. Lokale Pfade für agy
-vars:
-  gemini_config_dir: "~/.gemini"
-  agy_bin_dir: "~/.local/bin"
-
-# 2. Lokale Freigaben pro Repository
-repos:
-  "*/examples/agy":
-    vars:
-      gemini_config_dir: "~/.gemini"
-      agy_bin_dir: "~/.local/bin"
-    runner:
-      extra_exact:
-        - "agy"
-      extra_prefixes:
-        - "agy -p"
-      extra_raw:
-        - cmd: agy
-          subcommands: ["-p"]
+mounts:
+  - src: ~/.gemini
+    dest: /home/sandbox/.gemini
+    mode: rw
+  - src: ~/.local/bin
+    dest: /home/sandbox/.local/bin
+    mode: ro
 ```
 
 ---
@@ -86,12 +72,12 @@ repos:
 # 1. Aus dem Root-Verzeichnis bauen
 make build
 
-# 2. agy-Prompt mit lokaler Benutzer-Konfiguration ausführen:
-./bin/keg run --repo examples/agy --user-config examples/agy/local-config.yaml -- agy -p "sag hi"
+# 2. agy-Prompt direkt in der Sandbox ausführen:
+./bin/keg run --repo examples/agy -- agy -p "sag hi"
 
 # 3. Oder als werfbarer Lauf mit just:
-./bin/keg run --repo examples/agy --user-config examples/agy/local-config.yaml --ephemeral -- just run
+./bin/keg run --repo examples/agy --ephemeral -- just run
 
 # 4. Interaktive agy-Session:
-./bin/keg run --repo examples/agy --user-config examples/agy/local-config.yaml -- agy
+./bin/keg run --repo examples/agy -- agy
 ```
