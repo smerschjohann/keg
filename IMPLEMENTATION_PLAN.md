@@ -5,7 +5,7 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + WP-M1 vollständig erledigt**, Details in den
+> Stand: **Phase 0 + WP-M1 + WP-M2 vollständig erledigt**, Details in den
 > jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -227,7 +227,8 @@ Diese Punkte haben den Originalplan korrigiert bzw. präzisiert:
 
 ## 4. WP-M2 — Proxy-Kanal (A)
 
-**Status:** ⬜ offen (nächster Schritt laut §13).
+**Status:** ✅ erledigt (Matcher, Host-Proxy, Guest-Bridge, Verdrahtung,
+Integrationstest). Umsetzungsnotizen am Abschnittsende.
 
 ### 4.1 Whitelist-Matcher
 
@@ -235,7 +236,12 @@ Diese Punkte haben den Originalplan korrigiert bzw. präzisiert:
   deterministisch, längster Suffix gewinnt.
 
 **Tests:** Tabellenfälle exakt/Wildcard/Subdomain-Fallen (`evil-golang.org`),
-leere Whitelist, Wildcard-vs-exakt-Priorität.
+leere Whitelist, Wildcard-vs-exakt-Priorität. ✅ (`TestMatch`,
+`TestMatch_LongestSuffixIsDeterministic`)
+
+**Umgesetzt:** Totale Funktion in `internal/egress/proxy`; exakt schlägt
+Wildcard, längster Wildcard-Suffix gewinnt, `*.suf.fix` matcht genau ein
+Label; Case-Insensitivität + Trailing-Dot-Normalisierung.
 
 ### 4.2 CONNECT-Proxy (Host-Seite)
 
@@ -247,18 +253,69 @@ leere Whitelist, Wildcard-vs-exakt-Priorität.
 **Tests:** Protokolltests über `net.Pipe()` (echte bwrap-frei):
 CONNECT erlaubt/verboten, Upstream verweigert CONNECT ⇒ 502,
 Plain-HTTP-Pfad, halboffene Verbindungen leaken keine Goroutinen
-(goroutine-leak-check).
+(goroutine-leak-check). ✅
+
+**Umgesetzt:** `proxy.Server.Serve(muxado.Session, cfg)`: zweistufige
+Filterung (Whitelist vor Dial), CONNECT-Tunneling vollduplex (die zuerst
+fertige Richtung schließt beide Enden), Plain-HTTP über
+`http.Transport.RoundTrip` inkl. Upstream-Proxy-Funktion, injizierbares
+`Dial` für Tests. Audit als strukturierte Callbacks + `FormatAudit`
+(golden-getestete Zeilen `ERLAUBT/BLOCKIERT <host:port>` — bewusst
+deutsch gemäß CONCEPT/Plan-Vorgabe). *Abweichung von der Testvorgabe:*
+die Protokolltests nutzen echte AF_UNIX-Socketpairs statt `net.Pipe()` —
+muxados Framer datenriert gegen net.Pipes synchronen Shared-Buffer-
+Handover (DATA RACE nur im Testtransport).
 
 ### 4.3 Guest-Bridge + Env-Injection
 
 * Bridge lauscht `127.0.0.1:8080`; `HTTP(S)_PROXY`/`NO_PROXY` werden gesetzt.
 
-**Integrationstest:** `go run mvdan.cc/sh@…`? Nein — stdlib: Sandbox-Client
-nutzt `http.Get("https://proxy.golang.org/")` gegen einen lokalen
-Fake-Upstream (Host-Seite), Whitelist entscheidet; zweiter Fall blockiert.
+**Integrationstest:** Sandbox-Client nutzt bash `/dev/tcp` (stdlib, kein
+curl-Dependency): CONNECT durch die echte Bridge, Whitelist entscheidet;
+zweiter Fall blockiert. ✅ (`TestSandboxProxyChannelDenied`)
 
-**DoD:** `keg run -- curl https://proxy.golang.org` funktioniert whitelisted,
-unbekannte Domain ⇒ sichtbare 403.
+**Umgesetzt:** `proxy.Bridge` ist byte-transparent (ein Loopback-Conn =
+ein muxado-Stream). Der Workload läuft jetzt **immer** durch den reexec'd
+Guest: Launch bindet die keg-Binary ro nach `/.keg` und präfixiert
+den Command mit dem Dispatch-Namen; `InitGuestDispatch` bedient beide
+Entrypoint-Formen (argv0-Name via reexec, argv[1]-Name via gebundener
+Binary). Proxy-Variablen leitet der Guest selbst aus dem `KEG_PROXY`-
+Marker ab — NACH dem Env-Strip, damit injizierte Egress-Konfiguration die
+Hygiene überlebt, geleakte Host-Proxys aber nicht.
+
+**DoD:** ✅ `keg run -- <cmd>` mit `allowed_domains`: CONNECT zu
+whitelisted Domains tunnelt, unbekannte Domain ⇒ sichtbare 403 +
+`BLOCKIERT`-Auditzeile auf stderr (offline per Fake-Upstream getestet;
+ein echter Internet-CONNECT hängt am realen Netz und bleibt
+manueller Smoke-Test).
+
+#### Umsetzungsnotizen M2
+
+1. **Residenter Guest statt exec:** Für Kanäle muss der Guest-Prozess
+   überleben, während der Workload läuft. Der Guest startet Bridges, spawn't
+   den Workload als Kind, forwardet Signale und spiegelt Exit-Codes
+   (Kind-Code verbatim, Signal ⇒ 128+signum, Spawn-Fehler ⇒ 127).
+2. **FD-Vertrag verschärft:** Der Workload erbt **nur stdio**; die
+   Kanal-Sockets bleiben exklusiv beim Guest. Umsetzung per CLOEXEC-Marking
+   statt hartem Close — hartes Close zerstört Runtime-Netpoll-Deskriptoren
+   des vollen Go-Binaries (empirisch: `netpoll failed` Fatal). Invariante
+   umbenannt: `TestInvariant_WorkloadGetsOnlyStdioFDs`.
+3. **Teardown-Reihenfolge Socketpairs:** Rohe Socketpair-FDs sind nicht
+   poller-registriert; ein Close auf der Datei weckt blockierende Leser
+   nicht. Deshalb: immer erst `muxado.Session.Close()` (weckt alle Streams
+   via `die()`), dann `Bridge.Close()`. Getestet in `TestStartProxyBridge`.
+4. **Tunnel-Close-Symmetrie:** Bidirektionales Copy schließt bei erster
+   beendeter Richtung **beide** Enden — halbseitiges CloseWrite allein
+   lässt die Gegenrichtung für immer im Read hängen (Goroutine-Leak).
+5. **muxado vs. net.Pipe:** muxados Framer datenriert bei Nutzung von
+   `net.Pipe` (synchroner Shared-Buffer-Handover); Tests daher über echte
+   AF_UNIX-Socketpairs (Produktionstransport ist ohnehin ein Socketpair).
+6. **Env-Hygiene dreistufig:** bwrap `--unsetenv` (M1) + Guest-Unset
+   (M1) + Guest-Reapply aus Marker (M2 neu): Die Proxy-Variablen sind
+   Teil der Denied-Liste, dürfen aber gezielt wieder gesetzt werden —
+   Quelle der Wahrheit ist ausschließlich `KEG_PROXY`.
+7. **Fail-closed Bridges:** Schlägt der Bridge-Start fehl, läuft der
+   Workload ohne Egress weiter — niemals Fallback auf Host-Netzzugriff.
 
 ---
 
@@ -466,8 +523,8 @@ kontrolliertem Egress. Nach **M5** vollständig für den Bestands-Workflow
 nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
-**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · als nächstes **M2**.
-Ein erster nutzbarer Schnitt existiert damit bereits: isolierte Shell mit
-Overlay-Modi (`--ephemeral`, `--disk-overlay NAME`), FD-Kanal-Plumbing
-(fd 3–5 als Socketpair-Enden) und doppelter Env-Hygiene — noch ohne
-Egress (M2/M3).
+**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · als nächstes **M3**
+(DNS-Kanal B).
+Erster nutzbarer Schnitt existiert: isolierte Shell mit Overlay-Modi und
+kontrolliertem HTTP(S)-Egress über Kanal A (`allowed_domains`, Audit-
+zeilen, Upstream-Proxy aus Host-Umgebung) — DNS-Filterung folgt in M3.
