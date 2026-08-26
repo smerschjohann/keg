@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/smerschjohann/keg/internal/config"
@@ -72,6 +73,43 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	}
 	for k, v := range orchestrator.ProxyEnv(repo.Network.AllowedDomains) {
 		plan.EnvSet[k] = v
+	}
+
+	// DNS channel: active whenever any egress feature is configured
+	// (allowed_domains, explicit enable or hosts mappings). Filtered DNS
+	// without proxy makes no sense and vice versa — the resolver shares
+	// the whitelist (CONCEPT.md §4.4).
+	if len(repo.Network.AllowedDomains) > 0 ||
+		repo.Network.DNS.Enabled || len(repo.Network.DNS.Hosts) > 0 {
+		// The netns stage serves the filtering resolver on loopback :53
+		// inside the sandbox namespace, so the classic resolv.conf works
+		// again (WP-M3 Umsetzungsnotiz 1).
+		rcPath := filepath.Join(plan.TmpDir, "resolv.conf")
+		const resolvConf = "nameserver 127.0.0.1\noptions timeout:1 retries:1\n"
+		// #nosec G304 -- path from our own instance dir
+		if err := os.WriteFile(rcPath, []byte(resolvConf), 0o600); err != nil { // #nosec G703 -- keg-created dir
+			return orchestrator.Plan{}, fmt.Errorf("write resolv.conf: %w", err)
+		}
+		plan.ResolvConf = rcPath
+		upstream := repo.Network.DNS.Upstream
+		if upstream == "" {
+			// Default to the host resolver: in the target environment the
+			// only reachable DNS is kube-dns (cluster.local names); there
+			// is no public fallback.
+			upstream = firstHostNameserver()
+		}
+		plan.EgressDNS = &orchestrator.DNSConfig{
+			Hosts:     repo.Network.DNS.Hosts,
+			Whitelist: repo.Network.AllowedDomains,
+			Upstream:  upstream,
+		}
+		hostsPath := filepath.Join(plan.TmpDir, "hosts")
+		content := buildHostsFile(repo.Network.DNS.Hosts)
+		// #nosec G304 -- path from our own instance dir
+		if err := os.WriteFile(hostsPath, []byte(content), 0o600); err != nil { // #nosec G703 -- keg-created dir
+			return orchestrator.Plan{}, fmt.Errorf("write hosts file: %w", err)
+		}
+		plan.HostsFile = hostsPath
 	}
 
 	// Prepare host-side directories per overlay mode.
@@ -173,6 +211,11 @@ func runAction(ctx context.Context, c *cliCommand) error {
 
 	// Serve egress channel A while the sandbox runs; closing the sandbox
 	// tears the session down (THREAT_MODEL §8.1: only controlled channels).
+	if plan.EgressDNS != nil {
+		if err := sb.StartEgressDNS(*plan.EgressDNS); err != nil {
+			fmt.Fprintf(os.Stderr, "keg: egress dns: %v\n", err)
+		}
+	}
 	if len(plan.EgressWhitelist) > 0 {
 		err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
 			Whitelist:     plan.EgressWhitelist,
@@ -215,4 +258,35 @@ func stripProxyScheme(v string) string {
 		}
 	}
 	return v
+}
+
+// buildHostsFile renders static dns.hosts mappings as an /etc/hosts file.
+// Wildcard patterns ("*.svc.local.test") are emitted literally per IP line;
+// glibc matches exact names only, so each pattern also gets its wildcard
+// form commented for documentation purposes.
+func buildHostsFile(hosts map[string]string) string {
+	var b strings.Builder
+	b.WriteString("127.0.0.1 localhost\n")
+	b.WriteString("::1 localhost\n")
+	for pattern, ip := range hosts {
+		name := strings.TrimPrefix(pattern, "*.")
+		fmt.Fprintf(&b, "%s %s\n", ip, name)
+	}
+	return b.String()
+}
+
+// firstHostNameserver returns the first nameserver from the host's
+// /etc/resolv.conf, or "" when unreadable (fail-closed SERVFAIL).
+func firstHostNameserver() string {
+	data, err := os.ReadFile("/etc/resolv.conf") // #nosec G304 -- fixed host path
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "nameserver ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "nameserver "))
+		}
+	}
+	return ""
 }

@@ -106,6 +106,10 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 	want := make([]string, 0, 36+2*len(HostDeniedEnvVars)+8)
 	want = append(want,
 		"--unshare-all",
+		// The network namespace is provided by the keg netns stage
+		// wrapping bwrap (it owns the namespace and serves DNS :53 there),
+		// so bwrap retains it instead of creating a fresh one.
+		"--share-net",
 		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",

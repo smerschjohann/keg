@@ -183,3 +183,31 @@ func unreachableUpstream(t *testing.T) string {
 }
 
 func shortTimeout() time.Duration { return 300 * time.Millisecond }
+
+// TestResolver_ZoneWildcardIsMultiLevel pins DNS-specific whitelist
+// semantics: "*.svc.cluster.local" is a ZONE pattern and must match any
+// depth below it (kubernetes.default.svc.cluster.local) — unlike the
+// proxy's single-level SNI wildcard.
+func TestResolver_ZoneWildcardIsMultiLevel(t *testing.T) {
+	t.Parallel()
+	r := Resolver{
+		Whitelist: []string{"*.svc.cluster.local", "cluster.local"},
+		Upstream:  unreachableUpstream(t),
+	}
+	for _, name := range []string{
+		"kubernetes.default.svc.cluster.local",
+		"a.b.c.svc.cluster.local",
+	} {
+		resp := r.HandleQuery(mustQuery(t, name))
+		if rc, _, _ := answerFields(t, resp); rc != miek.RcodeServerFailure {
+			t.Fatalf("zone wildcard denied %s: rcode=%d (want forward attempt/SERVFAIL)", name, rc)
+		}
+	}
+	// Still deny outside the zone.
+	if resp := r.HandleQuery(mustQuery(t, "blocked.invalid")); func() bool {
+		rc, _, _ := answerFields(t, resp)
+		return rc != miek.RcodeNameError
+	}() {
+		t.Fatal("name outside zone was forwarded")
+	}
+}

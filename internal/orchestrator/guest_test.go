@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.ngrok.com/muxado"
-
 	"github.com/moby/sys/reexec"
+	"golang.ngrok.com/muxado"
 )
 
 // TestGuest_ExecsCommand verifies the reexec entrypoint transparently

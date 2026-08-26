@@ -96,14 +96,15 @@ func prepareGuestProcess() {
 // startConfiguredBridges starts every guest-side bridge requested by env
 // marker. Returns a stop function that is always safe to call.
 func startConfiguredBridges() func() {
-	var stop func()
+	var stops []func()
 	if addr := os.Getenv(EnvProxyBridge); addr != "" && addr != "0" {
-		stop = startProxyBridgeFromFD(FDProxy, addr)
+		stops = append(stops, startProxyBridgeFromFD(FDProxy, addr))
 	}
-	if stop == nil {
-		return func() {}
+	return func() {
+		for _, stop := range stops {
+			stop()
+		}
 	}
-	return stop
 }
 
 // startProxyBridgeFromFD wires the channel file into a loopback listener.
@@ -199,10 +200,14 @@ func runGuestCommand(argv []string) int {
 }
 
 // InitGuestDispatch is the single reentry gate for keg binaries: it
-// handles both classic reexec (argv[0] = guest name) and the bwrap-bound
-// dispatch (argv[1] = guest name, see BuildArgs). Returns true when this
-// process IS a sandbox guest and never returns from it.
+// handles both classic reexec (argv[0] = guest name) and argv[1] dispatch
+// for the netns stage and the bwrap-bound guest (see BuildArgs). Returns
+// true when this process IS a sandbox component and never returns from it.
 func InitGuestDispatch() bool {
+	if len(os.Args) > 1 && os.Args[1] == NetnsStageCommandName {
+		netnsStageMain()
+		return true
+	}
 	if len(os.Args) > 1 && os.Args[1] == GuestCommandName {
 		guestMain()
 		return true

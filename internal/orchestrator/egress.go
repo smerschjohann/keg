@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/smerschjohann/keg/internal/egress/dns"
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 
 	"golang.ngrok.com/muxado"
@@ -77,5 +78,22 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 		},
 	}
 	go func() { _ = proxy.Serve(muxado.Server(file, nil), server) }()
+	return nil
+}
+
+// StartEgressDNS serves the filtering resolver on channel B until the
+// sandbox exits. The :53 listener lives in the netns stage; this host side
+// applies policy and reaches the upstream with real network access.
+func (s *Sandbox) StartEgressDNS(cfg DNSConfig) error {
+	file := s.Channel(FDDNS)
+	if file == nil {
+		return fmt.Errorf("egress dns: channel fd %d not available", FDDNS)
+	}
+	resolver := &dns.Resolver{
+		Hosts:     cfg.Hosts,
+		Whitelist: cfg.Whitelist,
+		Upstream:  cfg.Upstream,
+	}
+	go func() { _ = dns.Serve(muxado.Server(file, nil), resolver) }()
 	return nil
 }

@@ -95,3 +95,23 @@ func planFor(repoRoot, tmpDir string, overlay orchestrator.Overlay, command []st
 	}
 	return plan, nil
 }
+
+// readFileOrDie reads a file or fails the test.
+func readFileOrDie(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 -- fixed paths in tests only
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+// writeTempFile writes content to a fresh temp file and returns its path.
+func writeTempFile(t *testing.T, name, content string) string {
+	t.Helper()
+	path := t.TempDir() + "/" + name
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { // #nosec G304 -- keg-created dir
+		t.Fatal(err)
+	}
+	return path
+}

@@ -125,9 +125,25 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
-// start performs one bwrap launch attempt. On success the process is being
-// monitored; its eventual result is delivered on sb.waitCh exactly once.
+// start performs one sandbox launch attempt through the netns stage. On
+// success the process is being monitored; its eventual result is delivered
+// on sb.waitCh exactly once.
 func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, error) {
+	// The netns stage wraps bwrap: it creates the private user+network
+	// namespace, prepares loopback and serves channel B (:53), then execs
+	// bwrap so the sandbox shares that namespace. Channel A keeps its own
+	// socketpair (fd 3); fd 4/5 stay reserved for future channels.
+	stage := &stageConfig{BwrapPath: bin, Args: args, DNS: p.EgressDNS}
+	unshareBin, err := findUnshare()
+	if err != nil {
+		return nil, err
+	}
+	selfExe := p.SelfExe
+	if selfExe == "" { // direct bwrap fallback (focused unit tests only)
+		stage.Args = args
+	}
+	stageSelf := p.SelfExe
+
 	// Channel socketpairs; guest ends become fds 3/4/5 inside the sandbox.
 	var hostEnds []*os.File
 	var extra []*os.File
@@ -155,6 +171,18 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 		stderr = os.Stderr
 	}
 
+	var argv []string
+	var envJSON string
+	if stageSelf != "" {
+		var uerr error
+		argv, envJSON, uerr = unshareStageArgv(unshareBin, stageSelf, stage)
+		if uerr != nil {
+			closeFiles(hostEnds)
+			closeFiles(extra)
+			return nil, uerr
+		}
+	}
+
 	// exec.Cmd copies stdout and stderr from dedicated goroutines; when
 	// callers pass the same stream for both (common in tests), writes must
 	// be serialized to stay race-free.
@@ -164,11 +192,22 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 
 	// ctx cancellation kills the process (CONCEPT.md §8.2); the stable-
 	// window check in Launch additionally catches early setup deaths.
-	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 -- args are built by BuildArgs from validated config
+	var cmd *exec.Cmd
+	if len(argv) > 0 {
+		// Stage path: unshare(1) execs this binary as the netns stage,
+		// which prepares loopback/DNS :53 and then execs bwrap.
+		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- assembled from validated config + trusted self path
+		cmd.Env = append(os.Environ(), stageEnvVar+"="+envJSON)
+	} else {
+		// Direct bwrap fallback for focused unit tests without SelfExe.
+		cmd = exec.CommandContext(ctx, bin, args...) // #nosec G204 -- args are built by BuildArgs from validated config
+	}
 	cmd.Stdin = stdin
 	cmd.Stdout = safeStdout
 	cmd.ExtraFiles = extra
-	cmd.Env = os.Environ() // sandbox env hygiene happens via bwrap args + guest strip
+	if cmd.Env == nil {
+		cmd.Env = os.Environ() // sandbox env hygiene happens via bwrap args + guest strip
+	}
 
 	// Capture stderr to detect the overlay EBUSY race while still passing
 	// it through to the caller's stream.

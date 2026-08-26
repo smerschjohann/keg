@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/smerschjohann/keg/internal/egress/proxy"
-
 	miek "github.com/miekg/dns"
 )
 
@@ -55,7 +53,7 @@ func (r *Resolver) HandleQuery(query []byte) []byte {
 		return mustPack(m, query)
 	}
 
-	if proxy.Match(name, r.Whitelist) != proxy.Allow {
+	if !matchZone(name, r.Whitelist) {
 		return nxdomain(q, query)
 	}
 
@@ -125,6 +123,30 @@ func parseIP(s string) (net.IP, bool) {
 		return v4, true
 	}
 	return ip, true // IPv6 AAAA-style mapping kept simple: A-only today
+}
+
+// matchZone evaluates the whitelist with DNS ZONE semantics: a pattern
+// matches the exact name or any name below it ("*.svc.cluster.local" is
+// hierarchical, unlike the proxy's single-level SNI wildcard — Kubernetes
+// names routinely carry multiple labels before the zone).
+func matchZone(name string, patterns []string) bool {
+	for _, p := range patterns {
+		p = strings.ToLower(p)
+		switch {
+		case p == "":
+			continue
+		case strings.HasPrefix(p, "*."):
+			suffix := strings.TrimPrefix(p, "*.")
+			if name == suffix || strings.HasSuffix(name, "."+suffix) {
+				return true
+			}
+		default:
+			if name == p || strings.HasSuffix(name, "."+p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // forward exchanges the query with the upstream resolver over UDP.

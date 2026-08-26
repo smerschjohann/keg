@@ -98,6 +98,11 @@ type Plan struct {
 	// EgressWhitelist carries the repo's network.allowed_domains for the
 	// host-side proxy server; empty disables channel A entirely.
 	EgressWhitelist []string
+	// EgressDNS carries channel-B policy; nil disables the DNS channel.
+	EgressDNS *DNSConfig
+	// HostsFile is a generated hosts file ro-bound to /etc/hosts so static
+	// dns.hosts mappings resolve natively (glibc reads files first).
+	HostsFile string
 	// SelfExe is the host path of this binary. When set (Launch resolves it
 	// automatically), BuildArgs routes the workload through the reexec'd
 	// guest entrypoint: binds the binary read-only into the sandbox and
@@ -105,6 +110,17 @@ type Plan struct {
 	SelfExe string
 
 	Command []string // command to exec after `--`
+}
+
+// DNSConfig is the host-side policy for egress channel B.
+type DNSConfig struct {
+	// Hosts are static mappings ("name" or "*.suffix" → IP) answered
+	// authoritatively before whitelist and upstream.
+	Hosts map[string]string
+	// Whitelist gates which names may be forwarded upstream.
+	Whitelist []string
+	// Upstream resolver address ("host:port").
+	Upstream string
 }
 
 // WeakFlags returns the isolation-weakening flags found in args.
@@ -141,6 +157,10 @@ func BuildArgs(p Plan) ([]string, error) {
 	args := make([]string, 0, 64+len(p.BwrapArgs))
 	args = append(args,
 		"--unshare-all",
+		// The network namespace is provided by the keg netns stage
+		// wrapping bwrap (it owns that namespace and serves DNS :53 in
+		// it), so bwrap retains it instead of creating a fresh one.
+		"--share-net",
 		// --disable-userns needs an explicit --unshare-user even though
 		// --unshare-all implies it (bwrap 0.11 requirement).
 		"--unshare-user",
@@ -221,6 +241,11 @@ func BuildArgs(p Plan) ([]string, error) {
 	// Injected resolver configuration.
 	if p.ResolvConf != "" {
 		args = append(args, "--ro-bind", p.ResolvConf, "/etc/resolv.conf")
+	}
+	// Generated hosts file: static dns.hosts mappings resolve natively
+	// because glibc consults files before DNS.
+	if p.HostsFile != "" {
+		args = append(args, "--ro-bind", p.HostsFile, "/etc/hosts")
 	}
 
 	// Environment hygiene: strip denied host vars first, then apply the

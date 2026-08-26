@@ -212,3 +212,129 @@ func TestUpstreamProxyFromEnv(t *testing.T) {
 		})
 	}
 }
+
+const dnsFixtureYAML = `
+version: "1"
+network:
+  allowed_domains:
+    - proxy.golang.org
+  dns:
+    upstream: "10.0.0.1:5353"
+    hosts:
+      db.local.test: "127.0.0.1"
+      "*.svc.local.test": "10.0.0.7"
+`
+
+func TestBuildRunPlan_DNSEnabledWithEgress(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	// The netns stage serves DNS on loopback :53 inside the sandbox
+	// namespace, so the classic resolv.conf works again.
+	if plan.ResolvConf == "" {
+		t.Fatal("ResolvConf not injected")
+	}
+	content, rerr := os.ReadFile(plan.ResolvConf) // #nosec G304 -- test-controlled path
+	if rerr != nil {
+		t.Fatalf("read %s: %v", plan.ResolvConf, rerr)
+	}
+	if !strings.Contains(string(content), "nameserver 127.0.0.1") {
+		t.Errorf("resolv.conf = %q, want loopback nameserver", content)
+	}
+	// Static mappings are exposed natively via a generated /etc/hosts.
+	if plan.HostsFile == "" {
+		t.Fatal("HostsFile not injected")
+	}
+	hcontent, herr := os.ReadFile(plan.HostsFile) // #nosec G304 -- test-controlled path
+	if herr != nil {
+		t.Fatalf("read %s: %v", plan.HostsFile, herr)
+	}
+	if !strings.HasPrefix(string(hcontent), "127.0.0.1 localhost\n") {
+		t.Errorf("hosts file missing localhost baseline: %q", content)
+	}
+	if plan.EgressDNS == nil || plan.EgressDNS.Whitelist[0] != "proxy.golang.org" {
+		t.Errorf("EgressDNS = %+v", plan.EgressDNS)
+	}
+}
+
+func TestBuildRunPlan_DNSHostsInEtcHosts(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), dnsFixtureYAML)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.HostsFile == "" {
+		t.Fatal("HostsFile nil despite dns.hosts")
+	}
+	content, err := os.ReadFile(plan.HostsFile) // #nosec G304 -- test-controlled path
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"db.local.test", "*.svc.local.test"} {
+		pattern := strings.TrimPrefix(want, "*.")
+		if !strings.Contains(string(content), pattern) {
+			t.Errorf("hosts file missing entry for %s:\n%s", want, content)
+		}
+	}
+}
+
+func TestBuildRunPlan_DNSHostsAndUpstreamCarried(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), dnsFixtureYAML)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.EgressDNS == nil {
+		t.Fatal("EgressDNS nil despite dns config")
+	}
+	if plan.EgressDNS.Hosts["db.local.test"] != "127.0.0.1" ||
+		plan.EgressDNS.Hosts["*.svc.local.test"] != "10.0.0.7" {
+		t.Errorf("hosts not carried: %+v", plan.EgressDNS.Hosts)
+	}
+	if plan.EgressDNS.Upstream != "10.0.0.1:5353" {
+		t.Errorf("upstream = %q", plan.EgressDNS.Upstream)
+	}
+}
+
+func TestBuildRunPlan_DNSDisabledWithoutNetwork(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\n")
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.HostsFile != "" || plan.EgressDNS != nil || plan.ResolvConf != "" {
+		t.Errorf("hosts file/EgressDNS injected without network config: %q %+v",
+			plan.HostsFile, plan.EgressDNS)
+	}
+}
+
+// TestBuildRunPlan_DefaultUpstreamIsHostResolver pins that an egress
+// sandbox without explicit dns.upstream forwards to the host's own
+// resolver (the kube-dns case: external DNS unreachable, cluster names
+// are what matters).
+func TestBuildRunPlan_DefaultUpstreamIsHostResolver(t *testing.T) {
+	hostNS := firstHostNameserver()
+	if hostNS == "" {
+		t.Skip("no nameserver in host /etc/resolv.conf")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
+
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.EgressDNS == nil || plan.EgressDNS.Upstream != hostNS {
+		t.Errorf("EgressDNS.Upstream = %v, want %q", plan.EgressDNS, hostNS)
+	}
+}
