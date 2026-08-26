@@ -236,9 +236,12 @@ type SecretSource struct {
 // RepoOverride is the per-target-repo section of the user config. It shares
 // the structure of the global scope but never introduces new schema.
 type RepoOverride struct {
-	Paths  *Paths            `yaml:"paths"`
-	Runner *RunnerOverride   `yaml:"runner"`
-	Vars   map[string]string `yaml:"vars"`
+	Paths   *Paths            `yaml:"paths"`
+	Runner  *RunnerOverride   `yaml:"runner"`
+	Vars    map[string]string `yaml:"vars"`
+	Mounts  []Mount           `yaml:"mounts"`
+	Network Network           `yaml:"network"`
+	Env     EnvSpec           `yaml:"env"`
 }
 
 // RunnerOverride carries only the additive allowlist parts.
@@ -259,6 +262,9 @@ type User struct {
 	Security      Security                `yaml:"security"`
 	Log           LogCfg                  `yaml:"log"`
 	SecretSources map[string]SecretSource `yaml:"secret_sources"`
+	Mounts        []Mount                 `yaml:"mounts"`
+	Network       Network                 `yaml:"network"`
+	Env           EnvSpec                 `yaml:"env"`
 	Repos         map[string]RepoOverride `yaml:"repos"`
 }
 

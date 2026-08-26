@@ -238,8 +238,9 @@ log:
 ## 5. Beispiele
 
 - **[`examples/pi-agent`](file:///home/coder/dev/keg/examples/pi-agent/README.md):** Vollständiges Beispiel für einen KI-Agenten mit `golang`-Preset, dynamischer `genkey`-Secret-Generierung nach `/run/secrets/ai_secret_key` und `just test-playwright`-Delegation.
-- **[`examples/agy`](file:///home/coder/dev/keg/examples/agy/README.md):** **Projekt-Konfiguration:** Ausführung von `agy` in der Sandbox mit `mode: transparent`, DNS-Forwarding für `*.googleapis.com` und direktem Zugriff auf `daily-cloudcode-pa.googleapis.com` (ohne HTTP-Proxy).
-- **[`examples/agy-user-config`](file:///home/coder/dev/keg/examples/agy-user-config/README.md):** **Nutzer-Konfiguration:** Sauberes Repository ohne Google-Freigaben; der Aufruf von `agy` wird rein über die lokale `user_config.yaml` (`runner.extra_prefixes: ["agy"]`) per Host-Delegation freigegeben.
+- **[`examples/agy`](file:///home/coder/dev/keg/examples/agy/README.md):** **Projekt-Konfiguration (In-Sandbox):** Ausführung von `agy` in der Sandbox; alle Mounts und Netzwerk-Regeln (`mode: transparent`, DNS-Forwarding, TCP-Endpoints) sind in `.keg.yaml` deklariert.
+- **[`examples/agy-user-sandbox`](file:///home/coder/dev/keg/examples/agy-user-sandbox/README.md):** **Nutzer-Konfiguration (In-Sandbox):** Sauberes Repository ohne Google-Endpunkte; der Benutzer schaltet `agy` in seiner `user_config.yaml` (`~/.config/keg/config.yaml`) über additive Mounts und Zero-Trust-Netzwerkregeln frei. `agy` läuft **vollständig isoliert und gesandboxt**.
+- **[`examples/agy-user-config`](file:///home/coder/dev/keg/examples/agy-user-config/README.md):** **Nutzer-Konfiguration (Host-Delegation):** Sauberes Repository; `agy` wird vom Host ausgeführt und über Kanal C (`runner.extra_prefixes: ["agy"]`) delegiert.
 
 ---
 

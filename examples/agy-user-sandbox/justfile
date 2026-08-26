@@ -1,0 +1,8 @@
+default:
+    @just --list
+
+# agy direkt in der Sandbox ausführen
+run prompt="sag hi":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    agy -p "{{prompt}}"

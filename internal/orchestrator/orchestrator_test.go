@@ -556,3 +556,60 @@ func TestBuildArgs_DelegationChannel(t *testing.T) {
 		t.Errorf("PATH = %q, want /.keg entry so `keg delegate` resolves", path)
 	}
 }
+
+func TestBuildPlan_UserConfigAdditiveMountsAndNetwork(t *testing.T) {
+	repoDir := t.TempDir()
+	repoYAML := "version: \"1\"\n"
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte(repoYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	userYAML := `
+mounts:
+  - src: ~/.gemini
+    dest: /home/sandbox/.gemini
+    mode: rw
+network:
+  mode: transparent
+  dns:
+    enabled: true
+    hosts:
+      custom.local: 10.0.0.99
+  sni_domains:
+    - daily-cloudcode-pa.googleapis.com
+  tcp_endpoints:
+    - host: daily-cloudcode-pa.googleapis.com
+      ports: [443]
+env:
+  set:
+    CUSTOM_USER_ENV: "enabled"
+`
+	userFile := filepath.Join(t.TempDir(), "user-config.yaml")
+	if err := os.WriteFile(userFile, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, _, err := BuildPlan(repoDir, "", userFile, OverlayPlain, "", OverlayPlain, "", "test-user-plan")
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	if !plan.Transparent {
+		t.Errorf("plan.Transparent = false, want true from user config")
+	}
+	if len(plan.Mounts) != 1 || plan.Mounts[0].Dest != "/home/sandbox/.gemini" {
+		t.Errorf("plan.Mounts = %v, want additive ~/.gemini mount", plan.Mounts)
+	}
+	if len(plan.SNIDomains) != 1 || plan.SNIDomains[0] != "daily-cloudcode-pa.googleapis.com" {
+		t.Errorf("plan.SNIDomains = %v, want daily-cloudcode-pa.googleapis.com", plan.SNIDomains)
+	}
+	if len(plan.TCPEndpoints) != 1 || plan.TCPEndpoints[0].Host != "daily-cloudcode-pa.googleapis.com" {
+		t.Errorf("plan.TCPEndpoints = %v, want daily-cloudcode-pa endpoint", plan.TCPEndpoints)
+	}
+	if plan.EgressDNS == nil || plan.EgressDNS.Hosts["custom.local"] != "10.0.0.99" {
+		t.Errorf("plan.EgressDNS hosts = %v, want custom.local", plan.EgressDNS)
+	}
+	if plan.EnvSet["CUSTOM_USER_ENV"] != "enabled" {
+		t.Errorf("plan.EnvSet[CUSTOM_USER_ENV] = %q, want enabled", plan.EnvSet["CUSTOM_USER_ENV"])
+	}
+}

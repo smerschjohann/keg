@@ -1,0 +1,5 @@
+version: "1"
+
+# Standard-Repository-Konfiguration:
+# Dieses Repository enthält KEINE agy-Mounts und KEINE Google-Netzwerkregeln.
+# Das Repository weiß nichts von agy.

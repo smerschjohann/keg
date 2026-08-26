@@ -21,9 +21,34 @@ func MergeUsers(global, override *User) *User {
 	}
 	out.Runner.ExtraExact = union(global.Runner.ExtraExact, override.Runner.ExtraExact)
 	out.Runner.ExtraPrefixes = union(global.Runner.ExtraPrefixes, override.Runner.ExtraPrefixes)
-	out.Runner.ExtraRaw = append(append([]RawRule{}, global.Runner.ExtraRaw...), override.Runner.ExtraRaw...)
-
 	out.Vars = mergeStringMaps(global.Vars, override.Vars)
+	out.Mounts = append(slices.Clone(global.Mounts), override.Mounts...)
+	out.Network = mergeNetwork(global.Network, override.Network)
+	out.Env = mergeEnv(global.Env, override.Env)
+	return out
+}
+
+func mergeNetwork(base, over Network) Network {
+	out := base
+	if over.Mode != "" {
+		out.Mode = over.Mode
+	}
+	if over.DNS.Enabled {
+		out.DNS.Enabled = true
+	}
+	if over.DNS.Upstream != "" {
+		out.DNS.Upstream = over.DNS.Upstream
+	}
+	out.DNS.Hosts = mergeStringMaps(base.DNS.Hosts, over.DNS.Hosts)
+	out.SNIDomains = union(base.SNIDomains, over.SNIDomains)
+	out.TCPEndpoints = append(slices.Clone(base.TCPEndpoints), over.TCPEndpoints...)
+	return out
+}
+
+func mergeEnv(base, over EnvSpec) EnvSpec {
+	out := base
+	out.Set = mergeStringMaps(base.Set, over.Set)
+	out.Unset = union(base.Unset, over.Unset)
 	return out
 }
 
@@ -47,16 +72,21 @@ func mergePaths(base Paths, over *Paths) Paths {
 	return out
 }
 
-func mergeStringMaps(base, over map[string]string) map[string]string {
+// MergeStringMaps merges over into base; keys in over take precedence.
+func MergeStringMaps(base, over map[string]string) map[string]string {
 	out := make(map[string]string, len(base)+len(over))
 	maps.Copy(out, base)
 	maps.Copy(out, over)
 	return out
 }
 
-// union appends elements of add that are not yet present in base,
+func mergeStringMaps(base, over map[string]string) map[string]string {
+	return MergeStringMaps(base, over)
+}
+
+// UnionStrings appends elements of add that are not yet present in base,
 // preserving order (Freigaben addieren sich — CONCEPT.md §4.8).
-func union(base, add []string) []string {
+func UnionStrings(base, add []string) []string {
 	out := slices.Clone(base)
 	for _, v := range add {
 		if !slices.Contains(out, v) {
@@ -64,6 +94,10 @@ func union(base, add []string) []string {
 		}
 	}
 	return out
+}
+
+func union(base, add []string) []string {
+	return UnionStrings(base, add)
 }
 
 // MatchRepo returns the effective user config for repoPath: global scope
@@ -112,9 +146,12 @@ func MatchRepo(user *User, repoPath string) *User {
 	}
 	override := user.Repos[chosen]
 	return MergeUsers(out, &User{
-		Paths:  derefPaths(override.Paths),
-		Runner: derefRunner(override.Runner),
-		Vars:   override.Vars,
+		Paths:   derefPaths(override.Paths),
+		Runner:  derefRunner(override.Runner),
+		Vars:    override.Vars,
+		Mounts:  override.Mounts,
+		Network: override.Network,
+		Env:     override.Env,
 	})
 }
 

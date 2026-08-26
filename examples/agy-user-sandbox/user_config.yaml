@@ -1,0 +1,47 @@
+# user_config.yaml (~/.config/keg/config.yaml oder übergeben mit --user-config)
+#
+# Ermöglicht dem Benutzer, agy VOLLSTÄNDIG GESANDBOXT in der Sandbox auszuführen,
+# ohne dass das Repository agy oder Google-Endpunkte in seiner .keg.yaml deklarieren muss.
+
+paths:
+  storage_base: "/var/lib/containers/storage/sandbox"
+  tmp_base: "/tmp"
+
+# 1. Additive Mounts für agy (werden in die Sandbox eingebunden):
+mounts:
+  - src: ~/.gemini
+    dest: /home/sandbox/.gemini
+    mode: rw
+  - src: ~/.local/bin
+    dest: /home/sandbox/.local/bin
+    mode: ro
+
+# 2. Additive Zero-Trust-Netzwerkregeln für Google Antigravity (agy):
+network:
+  mode: transparent
+  dns:
+    enabled: true
+    hosts:
+      lh3.googleusercontent.com: 172.217.113.4
+      accounts.google.com: 172.217.113.4
+  sni_domains:
+    - daily-cloudcode-pa.googleapis.com
+    - oauth2.googleapis.com
+    - "*.googleapis.com"
+    - "*.googleusercontent.com"
+    - "*.gstatic.com"
+    - accounts.google.com
+  tcp_endpoints:
+    - host: daily-cloudcode-pa.googleapis.com
+      ports: [443]
+    - host: oauth2.googleapis.com
+      ports: [443]
+    - host: www.googleapis.com
+      ports: [443]
+    - host: lh3.googleusercontent.com
+      ports: [443]
+    - host: accounts.google.com
+      ports: [443]
+
+security:
+  landlock: auto

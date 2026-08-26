@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -83,8 +84,12 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		return Plan{}, nil, err
 	}
 
-	var expandedMounts []config.Mount
-	for _, m := range repo.Mounts {
+	allMounts := make([]config.Mount, 0, len(repo.Mounts)+len(effective.Mounts))
+	allMounts = append(allMounts, repo.Mounts...)
+	allMounts = append(allMounts, effective.Mounts...)
+
+	expandedMounts := make([]config.Mount, 0, len(allMounts))
+	for _, m := range allMounts {
 		src := m.Src
 		if exp, err := config.ExpandPath(src); err == nil && exp != "" {
 			src = exp
@@ -93,19 +98,26 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		expandedMounts = append(expandedMounts, m)
 	}
 
+	mode := repo.Network.Mode
+	if effective.Network.Mode != "" {
+		mode = effective.Network.Mode
+	}
+	sniDomains := config.UnionStrings(repo.Network.SNIDomains, effective.Network.SNIDomains)
+	tcpEndpoints := append(slices.Clone(repo.Network.TCPEndpoints), effective.Network.TCPEndpoints...)
+
 	plan := Plan{
 		RepoRoot:    root,
 		SandboxHome: "/home/sandbox",
 		Mounts:      expandedMounts,
-		EnvUnset:    repo.Env.Unset,
+		EnvUnset:    config.UnionStrings(repo.Env.Unset, effective.Env.Unset),
 		EnvSet:      map[string]string{},
 		BwrapArgs:   repo.BwrapArgs,
 		AllowWeakBwrap: effective.Security.AllowWeakBwrap != nil &&
 			*effective.Security.AllowWeakBwrap,
 		Overlay:      overlay,
-		SNIDomains:   repo.Network.SNIDomains,
-		TCPEndpoints: repo.Network.TCPEndpoints,
-		Transparent:  repo.Network.Mode == "transparent",
+		SNIDomains:   sniDomains,
+		TCPEndpoints: tcpEndpoints,
+		Transparent:  mode == "transparent",
 		Landlock:     effective.Security.Landlock,
 	}
 	if plan.Landlock == "" {
@@ -113,6 +125,9 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	}
 	plan.EnvSet[EnvLandlock] = plan.Landlock
 	for k, v := range repo.Env.Set {
+		plan.EnvSet[k] = v
+	}
+	for k, v := range effective.Env.Set {
 		plan.EnvSet[k] = v
 	}
 
@@ -231,15 +246,18 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		}
 	}
 
-	if repo.Network.Mode != "transparent" {
-		for k, v := range ProxyEnv(repo.Network.SNIDomains) {
+	if !plan.Transparent {
+		for k, v := range ProxyEnv(plan.SNIDomains) {
 			plan.EnvSet[k] = v
 		}
 	}
 
-	if len(repo.Network.SNIDomains) > 0 ||
-		len(repo.Network.TCPEndpoints) > 0 ||
-		repo.Network.DNS.Enabled || len(repo.Network.DNS.Hosts) > 0 {
+	dnsHosts := config.MergeStringMaps(repo.Network.DNS.Hosts, effective.Network.DNS.Hosts)
+	dnsEnabled := repo.Network.DNS.Enabled || effective.Network.DNS.Enabled
+
+	if len(plan.SNIDomains) > 0 ||
+		len(plan.TCPEndpoints) > 0 ||
+		dnsEnabled || len(dnsHosts) > 0 {
 		rcPath := filepath.Join(plan.TmpDir, "resolv.conf")
 		const resolvConf = "nameserver 127.0.0.1\noptions timeout:1 retries:1\n"
 		if err := os.WriteFile(rcPath, []byte(resolvConf), 0o600); err != nil { // #nosec G703 -- keg-created dir
@@ -247,20 +265,23 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		}
 		plan.ResolvConf = rcPath
 		upstream := repo.Network.DNS.Upstream
+		if effective.Network.DNS.Upstream != "" {
+			upstream = effective.Network.DNS.Upstream
+		}
 		if upstream == "" {
 			upstream = FirstHostNameserver()
 		}
-		whitelist := append([]string{}, repo.Network.SNIDomains...)
-		for _, ep := range repo.Network.TCPEndpoints {
+		whitelist := append([]string{}, plan.SNIDomains...)
+		for _, ep := range plan.TCPEndpoints {
 			whitelist = append(whitelist, strings.ToLower(ep.Host))
 		}
 		plan.EgressDNS = &DNSConfig{
-			Hosts:     repo.Network.DNS.Hosts,
+			Hosts:     dnsHosts,
 			Whitelist: whitelist,
 			Upstream:  upstream,
 		}
 		hostsPath := filepath.Join(plan.TmpDir, "hosts")
-		content := BuildHostsFile(repo.Network.DNS.Hosts)
+		content := BuildHostsFile(dnsHosts)
 		if err := os.WriteFile(hostsPath, []byte(content), 0o600); err != nil { // #nosec G703 -- keg-created dir
 			return Plan{}, nil, fmt.Errorf("write hosts file: %w", err)
 		}

@@ -195,3 +195,64 @@ func TestMergeVars_PrecedenceOrder(t *testing.T) {
 		t.Errorf("vars[FROM_ENV] = %q, want env injection KEG_VAR_FROM_ENV", vars["FROM_ENV"])
 	}
 }
+
+func TestMergeUsers_MountsAndNetwork(t *testing.T) {
+	base := userFromYAML(t, `
+mounts:
+  - src: ~/.gemini
+    dest: /home/sandbox/.gemini
+    mode: rw
+network:
+  mode: proxy
+  dns:
+    enabled: true
+    hosts:
+      global.host: 1.1.1.1
+  sni_domains:
+    - api.anthropic.com
+  tcp_endpoints:
+    - host: db.internal
+      ports: [5432]
+env:
+  set:
+    GLOBAL_VAR: "1"
+`)
+	override := userFromYAML(t, `
+mounts:
+  - src: ~/.local/bin
+    dest: /home/sandbox/.local/bin
+    mode: ro
+network:
+  mode: transparent
+  dns:
+    hosts:
+      local.host: 2.2.2.2
+  sni_domains:
+    - daily-cloudcode-pa.googleapis.com
+  tcp_endpoints:
+    - host: daily-cloudcode-pa.googleapis.com
+      ports: [443]
+env:
+  set:
+    LOCAL_VAR: "2"
+`)
+	got := MergeUsers(base, override)
+	if len(got.Mounts) != 2 {
+		t.Fatalf("mounts count = %d, want 2", len(got.Mounts))
+	}
+	if got.Network.Mode != "transparent" {
+		t.Errorf("network.mode = %q, want transparent", got.Network.Mode)
+	}
+	if len(got.Network.SNIDomains) != 2 {
+		t.Errorf("sni_domains = %v, want 2 domains", got.Network.SNIDomains)
+	}
+	if len(got.Network.TCPEndpoints) != 2 {
+		t.Errorf("tcp_endpoints = %v, want 2 endpoints", got.Network.TCPEndpoints)
+	}
+	if got.Network.DNS.Hosts["local.host"] != "2.2.2.2" || got.Network.DNS.Hosts["global.host"] != "1.1.1.1" {
+		t.Errorf("dns hosts = %v", got.Network.DNS.Hosts)
+	}
+	if got.Env.Set["LOCAL_VAR"] != "2" || got.Env.Set["GLOBAL_VAR"] != "1" {
+		t.Errorf("env.set = %v", got.Env.Set)
+	}
+}
