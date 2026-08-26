@@ -11,6 +11,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/template"
 )
 
 // buildRunPlan loads and validates all configuration for a sandbox run and
@@ -54,7 +55,16 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 
 	effective := config.MatchRepo(user, root)
 	vars := config.MergeVars(repo.Vars, effective.Vars, nil)
-	_ = vars // consumed by template resolution in WP-M4
+
+	// Template context: .Vars always, .Env only when the user config opts
+	// in (THREAT_MODEL §8: host environment is never implicitly exposed).
+	tctx := template.Context{Vars: vars}
+	if effective.TemplateEnv.AllowEnv != nil && *effective.TemplateEnv.AllowEnv {
+		tctx.Env = envMap()
+	}
+	if err := resolveTemplates(repo, tctx); err != nil {
+		return orchestrator.Plan{}, err
+	}
 
 	plan := orchestrator.Plan{
 		RepoRoot:    root,
@@ -289,4 +299,57 @@ func firstHostNameserver() string {
 		}
 	}
 	return ""
+}
+
+// envMap snapshots the host environment for template access.
+func envMap() map[string]string {
+	env := make(map[string]string, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		if k, v, ok := strings.Cut(entry, "="); ok {
+			env[k] = v
+		}
+	}
+	return env
+}
+
+// resolveTemplates applies the restricted template language to every
+// declared-template-bare field (CONCEPT.md §4.6): mount paths,
+// dns.hosts targets, env.set values and port names. Everything else
+// stays literal by construction — delegation rules can never be bent
+// through templates.
+func resolveTemplates(repo *config.Repo, tctx template.Context) error {
+	for i := range repo.Mounts {
+		src, err := template.Apply(repo.Mounts[i].Src, tctx)
+		if err != nil {
+			return fmt.Errorf("mounts[%d].src: %w", i, err)
+		}
+		repo.Mounts[i].Src = src
+		dst, err := template.Apply(repo.Mounts[i].Dest, tctx)
+		if err != nil {
+			return fmt.Errorf("mounts[%d].dest: %w", i, err)
+		}
+		repo.Mounts[i].Dest = dst
+	}
+	for name, target := range repo.Network.DNS.Hosts {
+		resolved, err := template.Apply(target, tctx)
+		if err != nil {
+			return fmt.Errorf("network.dns.hosts[%s]: %w", name, err)
+		}
+		repo.Network.DNS.Hosts[name] = resolved
+	}
+	for key, value := range repo.Env.Set {
+		resolved, err := template.Apply(value, tctx)
+		if err != nil {
+			return fmt.Errorf("env.set[%s]: %w", key, err)
+		}
+		repo.Env.Set[key] = resolved
+	}
+	for i := range repo.Ports {
+		name, err := template.Apply(repo.Ports[i].Name, tctx)
+		if err != nil {
+			return fmt.Errorf("ports[%d].name: %w", i, err)
+		}
+		repo.Ports[i].Name = name
+	}
+	return nil
 }
