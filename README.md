@@ -190,10 +190,38 @@ network:
     - api.openai.com
     - proxy.golang.org
 
-# Port-Rückkanal (Host -> Sandbox)
+# Port-Rückkanal: Host-Verbindungen in die Sandbox durchreichen (§4.9)
+#
+# Ein Dev-Server läuft IN der Sandbox (z.B. :3000). Damit ihn der Host
+# erreicht (Browser, Playwright, curl), deklariert das Repo die Ports.
+# keg — Kernel-isolated Execution with Gateways bindet dafür Host-Listener und tunnelt jede Verbindung über
+# Kanal E in die Sandbox zum Deklarationsziel.
 ports:
-  - name: web
+  - "3000"              # Sandbox 127.0.0.1:3000 -> Host 127.0.0.1:3000
+  - "5432:15432"        # Sandbox :5432 -> abweichender Host-Port 15432
+  - name: dev-server
     port: 8080
+    dynamic: true       # kollisionsfreier Host-Port, in der Sandbox als
+                        # $KEG_PORT_DEV_SERVER erreichbar
+```
+
+**So funktioniert das Durchreichen (Host → interner Sandbox-Port):**
+
+1. Der Service läuft **in** der Sandbox und bindet `127.0.0.1:<guest>` —
+   von außen unerreichbar, da die Sandbox nur eigenes Loopback besitzt.
+2. Bei Bedarf exponiert der Host den Port: Deklarationen ohne Trennpunkt
+   (`"3000"`) nutzen denselben Host-Port; `"<guest>:<host>"` wählt einen
+   abweichenden Host-Port; `dynamic: true` reserviert kollisionsfrei einen
+   freien Host-Port und schreibt ihn als `$KEG_PORT_<NAME>` in die
+   Sandbox-Env (Namen normalisiert zu `[A-Z0-9_]`).
+3. keg verbindet sich mit jedem Verbindungsaufbau über **Kanal E**
+   in die Sandbox; der Guest-Forwarder wählt das Ziel auf dem Sandbox-
+   Loopback. Die Sandbox erhält dadurch **keinen** ausgehenden Weg — sie
+   kann nur annehmen, was hereingebracht wird.
+4. Sicherheit: Host-seitig wird ausschließlich `127.0.0.1` gebunden,
+   niemals `0.0.0.0`; Guest-seitig werden nur deklarierte Ziele gedialt
+   (Deny-by-default). Details und Invarianten: CONCEPT.md §4.9 und
+   THREAT_MODEL.md §5.8.
 
 # Whitelist für Host-Delegation
 delegated_tasks:
