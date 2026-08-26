@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -361,5 +362,51 @@ network:
 	}
 	if !plan.Transparent {
 		t.Error("plan.Transparent not set")
+	}
+}
+
+func TestBuildRunPlan_TCPEndpointsJoinDNSWhitelist(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+network:
+  mode: transparent
+  tcp_endpoints:
+    - host: registry-1.docker.io
+      ports: [443]
+`)
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	// Raw-TCP policy correlates resolved IPs back to endpoint names — the
+	// names must therefore be resolvable (whitelisted) in channel B.
+	if plan.EgressDNS == nil {
+		t.Fatal("EgressDNS nil despite tcp_endpoints")
+	}
+	if !slices.Contains(plan.EgressDNS.Whitelist, "registry-1.docker.io") {
+		t.Errorf("Whitelist = %v, want it to contain tcp_endpoints host", plan.EgressDNS.Whitelist)
+	}
+}
+
+func TestBuildRunPlan_TransparentTCPEndpointsCarried(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+network:
+  mode: transparent
+  tcp_endpoints:
+    - host: registry-1.docker.io
+      ports: [443]
+`)
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if !plan.Transparent {
+		t.Error("plan.Transparent not set")
+	}
+	if len(plan.TCPEndpoints) != 1 || plan.TCPEndpoints[0].Host != "registry-1.docker.io" {
+		t.Errorf("TCPEndpoints = %+v", plan.TCPEndpoints)
 	}
 }

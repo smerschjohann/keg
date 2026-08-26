@@ -92,10 +92,12 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	}
 
 	// DNS channel: active whenever any egress feature is configured
-	// (allowed_domains, explicit enable or hosts mappings). Filtered DNS
-	// without proxy makes no sense and vice versa — the resolver shares
-	// the whitelist (CONCEPT.md §4.4).
+	// (allowed_domains, explicit enable, hosts mappings or tcp_endpoints).
+	// Filtered DNS without proxy makes no sense and vice versa — the
+	// resolver shares the whitelist (CONCEPT.md §4.4). tcp_endpoints names
+	// join the whitelist: their A answers feed the IP correlation table.
 	if len(repo.Network.SNIDomains) > 0 ||
+		len(repo.Network.TCPEndpoints) > 0 ||
 		repo.Network.DNS.Enabled || len(repo.Network.DNS.Hosts) > 0 {
 		// The netns stage serves the filtering resolver on loopback :53
 		// inside the sandbox namespace, so the classic resolv.conf works
@@ -114,9 +116,13 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 			// is no public fallback.
 			upstream = firstHostNameserver()
 		}
+		whitelist := append([]string{}, repo.Network.SNIDomains...)
+		for _, ep := range repo.Network.TCPEndpoints {
+			whitelist = append(whitelist, strings.ToLower(ep.Host))
+		}
 		plan.EgressDNS = &orchestrator.DNSConfig{
 			Hosts:     repo.Network.DNS.Hosts,
-			Whitelist: repo.Network.SNIDomains,
+			Whitelist: whitelist,
 			Upstream:  upstream,
 		}
 		hostsPath := filepath.Join(plan.TmpDir, "hosts")
@@ -232,7 +238,7 @@ func runAction(ctx context.Context, c *cliCommand) error {
 			fmt.Fprintf(os.Stderr, "keg: egress dns: %v\n", err)
 		}
 	}
-	if len(plan.SNIDomains) > 0 {
+	if len(plan.SNIDomains) > 0 || len(plan.TCPEndpoints) > 0 {
 		err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
 			SNIDomains:    plan.SNIDomains,
 			UpstreamProxy: upstreamProxyFromEnv(os.Getenv),
