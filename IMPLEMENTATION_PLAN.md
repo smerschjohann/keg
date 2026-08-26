@@ -5,7 +5,7 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + WP-M1 + WP-M2 + WP-M3 vollständig erledigt**, Details in den
+> Stand: **Phase 0 + M1–M3 vollständig, M4 teilweise** (Details je Abschnitt),
 > jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -396,19 +396,24 @@ Namespace); Deny-by-default per NXDOMAIN; Whitelist geteilt mit Kanal A
 
 ## 6. WP-M4 — Templates, Vars, Env, Ports
 
-**Status:** ⬜ offen (Teile vorweggenommen: PortSpec-Parsing inkl.
-String-/Mapping-Formen sitzt in `internal/config`; `env.set`/`env.unset`
-wird bereits vom Arg-Builder angewendet).
+**Status:** 🔶 §6.1 erledigt (Template-Engine + Anwendung), §6.2–§6.4 offen
+(Teile vorweggenommen: PortSpec-Parsing inkl. String-/Mapping-Formen sitzt
+in `internal/config`; `env.set`/`env.unset` wird bereits vom Arg-Builder
+angewendet; Weak-Flag-Gate aus 3.2 existiert).
 
-### 6.1 Template-Engine (`internal/template`)
+### 6.1 Template-Engine (`internal/template`) — ✅
 
-* Kontext **nur** `.Vars`, `.Env`; Funktionen: `default`; sonst harter Fehler.
-* `Vars`-Merge: Repo → User global → repos[match] → `KEG_VAR_*`.
-* Anwendungsfelder: mounts src/dest, dns.hosts-Werte, env.set, ports-Namen.
-
-**Tests:** jede nicht-template-bare Struktur bleibt literal (Delegations-
-Regeln können nicht umgeleitet werden); fehlende Var ohne `default` ⇒ Fehler
-mit Zeilenreferenz; `allow_env=false` ⇒ `.Env`-Zugriff = Konfigurationsfehler.
+* Kontext **nur** `.Vars`, `.Env`; einzige Funktion `default`; alle anderen
+  Funktionen (auch text/template-Builtins wie printf) ⇒ harter Fehler mit
+  Zeilenreferenz.
+* Fehlende Var außerhalb von `default` ⇒ Fehler mit Zeilenreferenz;
+  innerhalb von `default` ist sie der intendierte Fallback-Auslöser.
+* `allow_env=false` (Default) ⇒ jeder `.Env`-Zugriff = Konfigurationsfehler,
+  der die aktivierende Flagge nennt (THREAT_MODEL §8: Host-Umgebung wird
+  nie implizit exponiert).
+* `Vars`-Merge: Repo → User global → repos[match] (`KEG_VAR_*` folgt).
+* Anwendungsfelder umgesetzt: mounts src/dest, dns.hosts-Werte, env.set-
+  Werte, ports-Namen. Alles Übrige bleibt literal by construction.
 
 ### 6.2 First-class `env` & `bwrap_args`
 
