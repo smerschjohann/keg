@@ -20,7 +20,7 @@ network:
 // bridge on loopback using bash /dev/tcp (no curl dependency): one CONNECT
 // request, first response line printed.
 const speakCONNECTViaBridge = `
-exec 3<>/dev/tcp/127.0.0.1/8080 || exit 97
+exec 3<>/dev/tcp/127.0.0.1/18081 || exit 97
 printf 'CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n' "$TARGET" "$TARGET" >&3
 IFS= read -r line <&3
 printf '%s\n' "$line"
@@ -52,7 +52,7 @@ func TestSandboxProxyChannelDenied(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d output:\n%s", code, out)
 	}
-	if !strings.Contains(out, "proxy=http://127.0.0.1:8080") {
+	if !strings.Contains(out, "proxy=http://127.0.0.1:18081") {
 		t.Errorf("HTTP_PROXY not injected as expected, output:\n%s", out)
 	}
 	if !strings.Contains(out, "403") {

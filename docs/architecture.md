@@ -29,7 +29,7 @@
 │  │  besitzt PRIVATE user+netns ── nur lo, KEINE Routen                   │  │
 │  │  ├── ip link set lo up                                                │  │
 │  │  ├── ip_unprivileged_port_start = 0        (per-Netns!)               │  │
-│  │  ├── LISTENER 127.0.0.1:8080 ══ Kanal A ══ muxado.Client ◄── fd3      │  │
+│  │  ├── LISTENER 127.0.0.1:18081 ══ Kanal A ══ muxado.Client ◄── fd3      │  │
 │  │  ├── LISTENER 127.0.0.1:53   ══ Kanal B ══ muxado.Client ◄── fd4      │  │
 │  │  ├── dropCapabilities()  (bwrap verweigert sonst unexpected caps)     │  │
 │  │  └── exec bwrap ──────────────────────────────────────────────────    │  │
@@ -44,7 +44,7 @@
 │  │                                                                       │ │
 │  │  WORKLOAD (bash · go · curl · dig …)                                  │ │
 │  │    erbt NUR stdio (TestInvariant_WorkloadGetsOnlyStdioFDs)            │ │
-│  │    • HTTP(S)_PROXY=http://127.0.0.1:8080                              │ │
+│  │    • HTTP(S)_PROXY=http://127.0.0.1:18081                              │ │
 │  │    • /etc/resolv.conf → nameserver 127.0.0.1                          │ │
 │  │    • /etc/hosts → statische dns.hosts-Mappings                        │ │
 │  └───────────────────────────────────────────────────────────────────────┘ │
@@ -57,7 +57,7 @@
 
 ```
 curl https://proxy.golang.org
-  └─► 127.0.0.1:8080 (Stage-Relay)
+  └─► 127.0.0.1:7443 (Stage-Relay)
         └─► fd3 muxado-Frames ─► Proxy.Serve ─► Match("proxy.golang.org") ✓
               └─► Upstream-CONNECT (Firmen-Proxy/direkt) ─► Tunnel ⟳ Internet
 
@@ -71,14 +71,14 @@ getent hosts kubernetes.default.svc.cluster.local
 
 ```
 evil.invalid               ─► :53  ─► kein Zonen-Match ─► NXDOMAIN
-blocked.example.com:443    ─► :8080 ─► kein Whitelist-Match ─► 403 + Audit-Zeile
+blocked.example.com:443    ─► :18081 ─► kein Whitelist-Match ─► 403 + Audit-Zeile
 ```
 
 ## Was gegenüber dem M2-Stand entfällt / sich ändert
 
 | Vorher (M2)                        | Nachher (Vorschlag)                    |
 |------------------------------------|----------------------------------------|
-| Gast resident, startet :8080-Bridge | Stage hält :8080-Relay (wie :53)       |
+| Gast resident, startet :18081-Bridge| Stage hält :7443-Relay (wie :53)       |
 | Gast spawn't Workload als Kind     | Gast exec't Workload direkt            |
 | `KEG_PROXY`-Marker an Gast     | entfällt                               |
 | Signal-Forwarding im Gast          | tty-Signale erreichen Shell direkt     |

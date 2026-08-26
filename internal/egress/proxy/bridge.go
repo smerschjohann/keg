@@ -9,8 +9,10 @@ import (
 )
 
 // DefaultBridgeAddr is the loopback address the guest-side proxy bridge
-// listens on inside the sandbox (CONCEPT.md §4.3).
-const DefaultBridgeAddr = "127.0.0.1:8080"
+// listens on inside the sandbox (CONCEPT.md §4.3). It lives only in the
+// sandbox loopback, but deliberately avoids 8080 and the rest of the
+// typical dev-server range so the workload itself can bind those ports.
+const DefaultBridgeAddr = "127.0.0.1:18081"
 
 // Bridge is the guest-side endpoint of egress channel A. It accepts plain
 // TCP connections on a loopback listener and pipes every connection

@@ -147,7 +147,10 @@ func TestBridge_ConcurrentConnections(t *testing.T) {
 }
 
 func TestDefaultBridgeAddr(t *testing.T) {
-	if DefaultBridgeAddr != "127.0.0.1:8080" {
-		t.Fatalf("DefaultBridgeAddr = %q, want loopback 8080 (CONCEPT.md §4.3)", DefaultBridgeAddr)
+	// 18081 = 8080 + 10000: deliberately outside the ranges dev servers
+	// typically bind (3000..9999), so the sandbox's own services can use
+	// 8080 and friends. CONCEPT.md §4.3.
+	if DefaultBridgeAddr != "127.0.0.1:18081" {
+		t.Fatalf("DefaultBridgeAddr = %q, want loopback 18081 (CONCEPT.md §4.3)", DefaultBridgeAddr)
 	}
 }

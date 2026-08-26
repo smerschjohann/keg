@@ -133,13 +133,13 @@ zu definierten Zielen, ohne pasta und ohne Aufweichung des Deny-by-default.
 ┌────────────────────────────▼─────────────── SANDBOX ─────────────────────────┐
 │  keg (Aufruf #2, CODE_KEG=1 — Entrypoint)                            │
 │    ├─ startet Guest-Bridge (muxado-Client, FD 3)                             │
-│    │    → lauscht 127.0.0.1:8080  (HTTP/HTTPS-CONNECT-Proxy)                 │
+│    │    → lauscht 127.0.0.1:18081  (HTTP/HTTPS-CONNECT-Proxy)                 │
 │    ├─ startet DNS-Bridge (FD 4)                                              │
 │    │    → lauscht 127.0.0.1:53 (UDP+TCP)                                     │
 │    ├─ Runner-Socket liegt unter /run/keg/runner.sock (FD 5)               │
 │    └─ exec <cmd>  (Default: interaktive Bash)                                │
 │                                                                              │
-│  go test ./...  ── HTTP_PROXY=127.0.0.1:8080 ──► Bridge ══ FD 3 ══► Egress    │
+│  go test ./...  ── HTTP_PROXY=127.0.0.1:18081 ──► Bridge ══ FD 3 ══► Egress    │
 │  DNS-Queries (resolv.conf → 127.0.0.1)          Bridge ══ FD 4 ══► DNS       │
 │  just delegate container-build                  Client ══ FD 5 ══► Runner    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -191,14 +191,19 @@ was die Whitelist iterativ vervollständigen hilft.
 
 ### 4.3 Guest-Bridge (Sandbox-Seite, Kanal A)
 
-Nimmt auf `127.0.0.1:8080` HTTP/HTTPS-Proxy-Requests entgegen, öffnet je
+Nimmt auf `127.0.0.1:18081` HTTP/HTTPS-Proxy-Requests entgegen, öffnet je
 Request einen muxado-Stream und piped 1:1 zum Host-Proxy. Kein Parsing,
 keine Logik — die Policy liegt vollständig auf der Host-Seite.
+
+Der Port liegt bewusst **nicht** auf 8080 (und generell außerhalb des
+üblichen Dev-Server-Bereichs 3000–9999): Der Bridge-Listener belegt den
+Sandbox-Loopback exklusiv, ein Dev-Server des Workloads auf 8080 würde
+sonst beim Binden scheitern.
 
 Die Sandbox-Umgebung erhält:
 
 ```
-HTTP_PROXY=http://127.0.0.1:8080   HTTPS_PROXY=http://127.0.0.1:8080
+HTTP_PROXY=http://127.0.0.1:18081  HTTPS_PROXY=http://127.0.0.1:18081
 http_proxy=…                       https_proxy=…
 NO_PROXY=localhost,127.0.0.1
 GOTOOLCHAIN=local                  (Template go; kein Toolchain-Download)
@@ -1142,7 +1147,7 @@ Socket, nichts für andere User erreichbar.
 1. **M1 – Skeleton:** Go-Orchestrator, reexec-Loop, bwrap mit Basis-Binds,
    `--unshare-all`, interaktive Shell. *Ergebnis: Shell in isolierter Box.*
 2. **M2 – Proxy-Kanal:** Socketpair + muxado, Egress-Proxy mit Whitelist +
-   Upstream-CONNECT, Guest-Bridge auf 8080, Env-Injection.
+   Upstream-CONNECT, Guest-Bridge auf 18081 (bewusst außerhalb des Dev-Server-Portbereichs, siehe §4.3), Env-Injection.
    *Ergebnis: `go get` läuft whitelisted.*
 3. **M3 – DNS-Kanal:** Embedded DNS (hosts/whitelist/upstream), resolv.conf-
    Injektion, UDP/TCP-Bridge.

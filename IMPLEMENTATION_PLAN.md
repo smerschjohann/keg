@@ -273,7 +273,7 @@ Handover (DATA RACE nur im Testtransport).
 
 ### 4.3 Guest-Bridge + Env-Injection
 
-* Bridge lauscht `127.0.0.1:8080`; `HTTP(S)_PROXY`/`NO_PROXY` werden gesetzt.
+* Bridge lauscht `127.0.0.1:18081` (bewusst nicht 8080 — Dev-Server in der Sandbox brauchen den Port selbst); `HTTP(S)_PROXY`/`NO_PROXY` werden gesetzt.
 
 **Integrationstest:** Sandbox-Client nutzt bash `/dev/tcp` (stdlib, kein
 curl-Dependency): CONNECT durch die echte Bridge, Whitelist entscheidet;
