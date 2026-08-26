@@ -238,6 +238,7 @@ log:
 ## 5. Beispiele
 
 - **[`examples/pi-agent`](file:///home/coder/dev/keg/examples/pi-agent/README.md):** Vollständiges Beispiel für einen KI-Agenten mit `golang`-Preset, dynamischer `genkey`-Secret-Generierung nach `/run/secrets/ai_secret_key` und `just test-playwright`-Delegation.
+- **[`examples/agy`](file:///home/coder/dev/keg/examples/agy/README.md):** Ausführung von Google Antigravity (`agy`) in einer Zero-Trust-Sandbox mit `mode: transparent`, DNS-Forwarding (`8.8.8.8:53`) für `*.googleapis.com` und direktem Zugriff auf `daily-cloudcode-pa.googleapis.com` (ohne HTTP-Proxy).
 
 ---
 

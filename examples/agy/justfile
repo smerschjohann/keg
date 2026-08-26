@@ -1,0 +1,15 @@
+default:
+    @just --list
+
+# Run agy demo prompt inside the sandbox
+run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running agy inside keg sandbox..."
+    agy -p "sag hi"
+
+# Interactive session with agy inside keg
+shell:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    agy

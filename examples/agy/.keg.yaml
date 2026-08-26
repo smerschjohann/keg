@@ -1,0 +1,30 @@
+version: "1"
+
+# Mounts required for Google Antigravity (agy):
+# - ~/.gemini: Google accounts, credentials, settings, state
+# - ~/.local/bin: agy CLI binary executable
+mounts:
+  - src: ~/.gemini
+    dest: /home/sandbox/.gemini
+    mode: rw
+  - src: ~/.local/bin
+    dest: /home/sandbox/.local/bin
+    mode: ro
+
+# Zero-trust network in transparent mode (no HTTP proxy):
+# - DNS upstream: 8.8.8.8:53 forwarding googleapis.com
+# - Endpoints: daily-cloudcode-pa.googleapis.com, oauth2.googleapis.com (*.googleapis.com)
+network:
+  mode: transparent
+  dns:
+    enabled: true
+    upstream: 8.8.8.8:53
+  sni_domains:
+    - daily-cloudcode-pa.googleapis.com
+    - oauth2.googleapis.com
+    - "*.googleapis.com"
+  tcp_endpoints:
+    - host: daily-cloudcode-pa.googleapis.com
+      ports: [443]
+    - host: oauth2.googleapis.com
+      ports: [443]

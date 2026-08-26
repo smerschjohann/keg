@@ -83,10 +83,20 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		return Plan{}, nil, err
 	}
 
+	var expandedMounts []config.Mount
+	for _, m := range repo.Mounts {
+		src := m.Src
+		if exp, err := config.ExpandPath(src); err == nil && exp != "" {
+			src = exp
+		}
+		m.Src = src
+		expandedMounts = append(expandedMounts, m)
+	}
+
 	plan := Plan{
 		RepoRoot:    root,
 		SandboxHome: "/home/sandbox",
-		Mounts:      repo.Mounts,
+		Mounts:      expandedMounts,
 		EnvUnset:    repo.Env.Unset,
 		EnvSet:      map[string]string{},
 		BwrapArgs:   repo.BwrapArgs,
