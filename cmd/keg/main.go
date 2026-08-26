@@ -84,6 +84,7 @@ func NewCommand() *cli.Command {
 			},
 			delegateCommand(),
 			trustCommand(),
+			agentCommand(),
 			listCommand(),
 			cleanCommand(),
 			cleanCacheCommand(),

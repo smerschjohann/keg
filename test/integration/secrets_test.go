@@ -139,3 +139,47 @@ func TestSandboxSecretsReadOnly(t *testing.T) {
 		t.Errorf("expected Read-only file system error, got:\n%s", out.String())
 	}
 }
+
+// TestSandboxSecretsHostFileBind verifies that static host files declared in
+// user config secrets: map are mounted read-only at /run/secrets/<name>.
+func TestSandboxSecretsHostFileBind(t *testing.T) {
+	dir := t.TempDir()
+	findBwrap(t)
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), repoConfig)
+
+	hostKeyFile := filepath.Join(t.TempDir(), "github-pat.txt")
+	writeFile(t, hostKeyFile, "ghp_secret_token_12345")
+
+	var out bytes.Buffer
+	plan, err := planFor(dir, t.TempDir(), orchestrator.OverlayPlain, []string{
+		"/bin/sh", "-c", `cat /run/secrets/github_pat && cat "$GITHUB_PAT_FILE"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.SecretPathBinds = []orchestrator.SecretBind{
+		{HostPath: hostKeyFile, GuestPath: "/run/secrets/github_pat"},
+	}
+	plan.EnvSet["GITHUB_PAT_FILE"] = "/run/secrets/github_pat"
+	plan.Stdout = &out
+	plan.Stderr = &out
+
+	sb, err := orchestrator.Launch(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	defer sb.Close()
+
+	code, err := sb.Wait()
+	if err != nil {
+		t.Fatalf("wait: %v\noutput:\n%s", err, out.String())
+	}
+	if code != 0 {
+		t.Fatalf("sandbox exited %d:\n%s", code, out.String())
+	}
+
+	want := "ghp_secret_token_12345ghp_secret_token_12345"
+	if strings.TrimSpace(out.String()) != want {
+		t.Errorf("got %q, want %q", strings.TrimSpace(out.String()), want)
+	}
+}

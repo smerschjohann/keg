@@ -137,7 +137,6 @@ func TestSandboxIsolatedCacheName(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), repoConfig)
 
 	runInCacheSandbox := func(script string) (string, int) {
-		var out bytes.Buffer
 		plan, err := planFor(dir, t.TempDir(), orchestrator.OverlayPlain,
 			[]string{"/bin/sh", "-c", script})
 		if err != nil {
@@ -150,15 +149,16 @@ func TestSandboxIsolatedCacheName(t *testing.T) {
 			OverlayRW:   rwDir,
 			OverlayWork: workDir,
 		})
-		plan.Stdout = &out
-		plan.Stderr = &out
+		var stdout, stderr bytes.Buffer
+		plan.Stdout = &stdout
+		plan.Stderr = &stderr
 		sb, err := orchestrator.Launch(context.Background(), plan)
 		if err != nil {
 			t.Fatalf("launch: %v", err)
 		}
 		code, _ := sb.Wait()
 		sb.Close()
-		return out.String(), code
+		return stdout.String(), code
 	}
 
 	// Run 1: write a cached marker inside the sandbox mount

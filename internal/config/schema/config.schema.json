@@ -1,0 +1,461 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/haxon/keg/main/internal/config/schema/config.schema.json",
+  "title": "Keg User Configuration",
+  "description": "Machine-local user configuration ($XDG_CONFIG_HOME/keg/config.yaml or ~/.config/keg/config.yaml). Defines local paths, secret fetch mechanisms, and per-repository overrides.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "paths": {
+      "$ref": "#/definitions/Paths",
+      "description": "Machine-local base directories for storage, tmp, and caches."
+    },
+    "runner": {
+      "$ref": "#/definitions/RunnerCfg",
+      "description": "Host runner settings and machine-global additional delegation whitelists."
+    },
+    "vars": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Machine-global variables for Go template replacement in repo configurations."
+    },
+    "template_env": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_env": {
+          "type": "boolean",
+          "description": "Allow or forbid {{ .Env.* }} host environment access in repository templates."
+        }
+      },
+      "description": "Gate access to host environment from repository templates."
+    },
+    "vars_from_exec": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/ExecSource"
+      },
+      "description": "Dynamic variable sources executed on host before sandbox launch (e.g. from secret managers)."
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_weak_bwrap": {
+          "type": "boolean",
+          "description": "Explicitly allow repositories to use isolation-weakening bubblewrap flags (e.g. --share-net, --dev-bind /)."
+        },
+        "landlock": {
+          "type": "string",
+          "enum": ["", "auto", "on", "off"],
+          "description": "Landlock LSM mode ('auto', 'on', or 'off')."
+        }
+      },
+      "description": "Security options and LSM toggles."
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "audit_file": {
+          "type": "string",
+          "description": "File path to append structured audit log events (allow/deny decisions)."
+        }
+      },
+      "description": "Audit logging configuration."
+    },
+    "secret_sources": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/SecretSource"
+      },
+      "description": "Periodic secret provider commands on the host (mounted at /run/secrets/<name>)."
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Static host file paths mapped directly to /run/secrets/<name> (supports ~ and $VAR expansion)."
+    },
+    "mounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Mount"
+      },
+      "description": "Machine-global additional mounts injected into all sandboxes."
+    },
+    "network": {
+      "$ref": "#/definitions/Network",
+      "description": "Machine-global network egress policy merged with repo network settings."
+    },
+    "env": {
+      "$ref": "#/definitions/EnvSpec",
+      "description": "Machine-global environment variable controls merged with repo environment settings."
+    },
+    "repos": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/RepoOverride"
+      },
+      "description": "Per-target-repository overrides matched by exact path or glob pattern (e.g. '~/work/*')."
+    }
+  },
+  "definitions": {
+    "Paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "storage_base": {
+          "type": "string",
+          "description": "Base directory for persistent overlay layers (default: /var/lib/containers/storage/sandbox)."
+        },
+        "tmp_base": {
+          "type": "string",
+          "description": "Base directory for temporary instance files and sockets (default: /tmp)."
+        },
+        "go_mod_cache": {
+          "type": "string",
+          "description": "Host Go module cache directory override (empty uses 'go env GOMODCACHE')."
+        },
+        "go_build_cache": {
+          "type": "string",
+          "description": "Host Go build cache directory override (empty uses 'go env GOCACHE')."
+        }
+      }
+    },
+    "RunnerCfg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "just_bin": {
+          "type": "string",
+          "description": "Name or path of 'just' binary on the host (default: 'just')."
+        },
+        "extra_exact": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional exact task names allowed globally on this machine."
+        },
+        "extra_prefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional task prefixes allowed globally on this machine."
+        },
+        "extra_raw": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RawRule"
+          },
+          "description": "Additional raw binary execution rules allowed globally on this machine."
+        }
+      }
+    },
+    "RunnerOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "just_bin": {
+          "type": "string",
+          "description": "Override 'just' binary for matched repositories."
+        },
+        "extra_exact": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional exact task names for matched repositories."
+        },
+        "extra_prefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional task prefixes for matched repositories."
+        },
+        "extra_raw": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RawRule"
+          },
+          "description": "Additional raw rules for matched repositories."
+        }
+      }
+    },
+    "ExecSource": {
+      "type": "object",
+      "required": ["cmd"],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Command and arguments to execute on the host to get variable value."
+        },
+        "cache": {
+          "type": "string",
+          "enum": ["", "session", "none"],
+          "description": "Cache mode: 'session' (default, run once per sandbox launch) or 'none'."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Execution timeout duration (e.g. '10s', '1m')."
+        }
+      }
+    },
+    "SecretSource": {
+      "type": "object",
+      "required": ["cmd"],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Command and arguments to execute periodically on the host to fetch secret content."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Refresh interval duration (e.g. '5m', '30s'). Empty or '0s' means initial fetch only."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Command execution timeout duration (e.g. '10s')."
+        },
+        "on_refresh_error": {
+          "type": "string",
+          "enum": ["", "keep", "fail"],
+          "description": "Action on refresh error: 'keep' (default, keep previous secret value) or 'fail' (terminate sandbox)."
+        },
+        "always": {
+          "type": "boolean",
+          "description": "Inject secret into all sandboxes automatically without needing repo declaration."
+        }
+      }
+    },
+    "RepoOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "$ref": "#/definitions/Paths"
+        },
+        "runner": {
+          "$ref": "#/definitions/RunnerOverride"
+        },
+        "vars": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Mount"
+          }
+        },
+        "network": {
+          "$ref": "#/definitions/Network"
+        },
+        "env": {
+          "$ref": "#/definitions/EnvSpec"
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SecretRef"
+          },
+          "description": "Additional secret needs requested for this repository (must exist in global secret_sources or secrets map)."
+        }
+      }
+    },
+    "EnvSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unset": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^=]+$"
+          },
+          "description": "Environment variables to remove."
+        },
+        "set": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables to set."
+        },
+        "inherit": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^=]+$"
+          },
+          "description": "Host environment variables to pass into sandbox."
+        },
+        "inherit_all": {
+          "type": "boolean",
+          "description": "Inherit all host environment variables."
+        }
+      }
+    },
+    "Mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "Source path on host."
+        },
+        "dest": {
+          "type": "string",
+          "description": "Destination path inside sandbox."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["ro", "rw", "dev", "tmpfs", "ephemeral", "disk"],
+          "description": "Mount mode: ro, rw, dev, tmpfs, ephemeral, or disk."
+        }
+      }
+    },
+    "SecretRef": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Secret identifier (mounted at /run/secrets/<name>)."
+        },
+        "env": {
+          "type": "string",
+          "description": "Optional environment variable pointing to /run/secrets/<name>."
+        }
+      }
+    },
+    "Network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["", "proxy", "transparent", "both"],
+          "description": "Network mode: 'proxy', 'transparent', or 'both'."
+        },
+        "dns": {
+          "$ref": "#/definitions/DNS"
+        },
+        "sni_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Whitelisted domain names for HTTP/HTTPS proxy and SNI filter."
+        },
+        "tcp_endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TCPEndpoint"
+          },
+          "description": "Allowed raw TCP destinations."
+        }
+      }
+    },
+    "DNS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "upstream": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TCPEndpoint": {
+      "type": "object",
+      "required": ["host", "ports"],
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "RawRule": {
+      "type": "object",
+      "required": ["cmd", "subcommands"],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "description": "Host command name (e.g. 'git', 'podman')."
+        },
+        "subcommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Allowed subcommands."
+        },
+        "opts_with_value": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Global options with value."
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Global standalone flags."
+        },
+        "allow_opt_value_form": {
+          "type": "boolean",
+          "description": "Allow --opt=value form."
+        },
+        "forbidden_args_matching": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Forbidden argument patterns."
+        }
+      }
+    }
+  }
+}

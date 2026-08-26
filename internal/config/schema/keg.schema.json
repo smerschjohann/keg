@@ -1,0 +1,313 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/haxon/keg/main/internal/config/schema/keg.schema.json",
+  "title": "Keg Repository Configuration",
+  "description": "Per-repository sandbox configuration (.keg.yaml). Versioned with the repository, contains no machine-specific host paths.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["1"],
+      "description": "Repo config schema version (currently only '1' is supported)."
+    },
+    "vars": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Repo-local variables for Go template replacement (e.g. {{ .Vars.key }})."
+    },
+    "templates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["go", "golang", "java", "node", "python"]
+      },
+      "uniqueItems": true,
+      "description": "Built-in language templates that provide standard toolchain environment variables and cache mounts."
+    },
+    "env": {
+      "$ref": "#/definitions/EnvSpec",
+      "description": "Sandbox environment variable control (deny-by-default isolation)."
+    },
+    "bwrap_args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Raw bubblewrap arguments appended to the generated bwrap command (isolation-weakening flags require security.allow_weak_bwrap in user config)."
+    },
+    "mounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Mount"
+      },
+      "description": "Additional filesystem mounts inside the sandbox."
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SecretRef"
+      },
+      "description": "Secrets required by the sandbox, resolved from user config secret_sources or secrets map into /run/secrets/<name>."
+    },
+    "ports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PortSpec"
+      },
+      "description": "Port forward back-channel exposing sandbox services on host loopback (127.0.0.1)."
+    },
+    "network": {
+      "$ref": "#/definitions/Network",
+      "description": "Zero-trust network egress policy (deny-by-default)."
+    },
+    "delegated_tasks": {
+      "$ref": "#/definitions/DelegatedTasks",
+      "description": "Host-only task whitelist for delegation from inside the sandbox via 'just delegate' or raw execution."
+    }
+  },
+  "definitions": {
+    "EnvSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unset": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^=]+$"
+          },
+          "description": "Environment variables to actively remove from the sandbox."
+        },
+        "set": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables to set in the sandbox (supports Go template expressions like {{ .Vars.foo }})."
+        },
+        "inherit": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^=]+$"
+          },
+          "description": "Explicit host environment variables to pass into the sandbox."
+        },
+        "inherit_all": {
+          "type": "boolean",
+          "description": "Pass through all host environment variables (except sensitive credentials and proxy settings)."
+        }
+      }
+    },
+    "Mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "Source path on host (supports Go template expressions like {{ .Vars.mock_data }})."
+        },
+        "dest": {
+          "type": "string",
+          "description": "Destination path inside sandbox (required unless mode is tmpfs)."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["ro", "rw", "dev", "tmpfs", "ephemeral", "disk"],
+          "description": "Mount mode: ro (read-only), rw (read-write), dev (device bind), tmpfs, ephemeral (tmpfs overlay), or disk (persistent disk overlay)."
+        }
+      }
+    },
+    "SecretRef": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Secret identifier defined in user config (mounted at /run/secrets/<name>)."
+        },
+        "env": {
+          "type": "string",
+          "description": "Optional environment variable set to /run/secrets/<name> inside the sandbox."
+        }
+      }
+    },
+    "PortSpec": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+(:[0-9]+)?$",
+          "description": "Port specifier: 'port' (same on guest and host) or 'guest:host' (e.g. '5432:15432')."
+        },
+        {
+          "type": "object",
+          "required": ["port"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Logical name for the port mapping (required if dynamic is true)."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port number inside the sandbox."
+            },
+            "dynamic": {
+              "type": "boolean",
+              "description": "Allocate host port dynamically and pass via KEG_PORT_<name> env variable."
+            }
+          }
+        }
+      ]
+    },
+    "Network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["", "proxy", "transparent", "both"],
+          "description": "Network egress mode: 'proxy' (HTTP/HTTPS proxy only), 'transparent' (SNI/TCP redirect), or 'both'."
+        },
+        "dns": {
+          "$ref": "#/definitions/DNS",
+          "description": "DNS resolution settings and static host mappings."
+        },
+        "sni_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Whitelisted domain names for HTTP/HTTPS proxy and transparent SNI filter (exact or wildcard like *.example.com)."
+        },
+        "tcp_endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TCPEndpoint"
+          },
+          "description": "Allowed raw TCP destinations (host + ports) for transparent mode."
+        }
+      }
+    },
+    "DNS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable embedded DNS server."
+        },
+        "upstream": {
+          "type": "string",
+          "description": "Upstream DNS resolver IP:port (empty uses host resolver)."
+        },
+        "hosts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Static DNS host mappings (exact or wildcard *.domain -> IP)."
+        }
+      }
+    },
+    "TCPEndpoint": {
+      "type": "object",
+      "required": ["host", "ports"],
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Target hostname or IP."
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "minItems": 1,
+          "description": "List of allowed TCP port numbers (1..65535)."
+        }
+      }
+    },
+    "DelegatedTasks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exact": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Exact task names allowed to run on host without arguments."
+        },
+        "prefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Task name prefixes allowed to run on host with arguments."
+        },
+        "raw": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RawRule"
+          },
+          "description": "Raw binary execution rules executed directly on host without just wrapping (e.g. git, podman)."
+        }
+      }
+    },
+    "RawRule": {
+      "type": "object",
+      "required": ["cmd", "subcommands"],
+      "additionalProperties": false,
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "description": "Host command name (e.g. 'git', 'podman')."
+        },
+        "subcommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Allowed subcommands (the first non-option argument must match one of these)."
+        },
+        "opts_with_value": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Global options that consume the next argument (e.g. '-c', '-C', '--format')."
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Standalone global boolean flags (e.g. '--no-pager', '--no-cache')."
+        },
+        "allow_opt_value_form": {
+          "type": "boolean",
+          "description": "Allow option=value syntax for global options (e.g. '--opt=val')."
+        },
+        "forbidden_args_matching": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Glob patterns for forbidden arguments (e.g. 'https://*', 'git@*')."
+        }
+      }
+    }
+  }
+}

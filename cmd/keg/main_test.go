@@ -47,6 +47,8 @@ func TestCLI_CommandsExist(t *testing.T) {
 	}{
 		{name: "run", command: "run"},
 		{name: "run alias r", command: "r"},
+		{name: "trust", command: "trust"},
+		{name: "agent", command: "agent"},
 		{name: "list", command: "list"},
 		{name: "clean", command: "clean"},
 		{name: "clean-cache", command: "clean-cache"},
@@ -98,6 +100,8 @@ func TestCLI_HelpListsSubcommandsWithUsage(t *testing.T) {
 	for _, want := range []string{
 		"isolated development sandbox",
 		"start a sandbox and run a command inside it",
+		"manage repository configuration trust",
+		"agent helpers for repository setup",
 		"list persistent overlay layers",
 		"delete a persistent overlay layer",
 		"remote-control daemon",

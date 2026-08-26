@@ -27,5 +27,14 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(runner.Exec(conn, os.Args[2:], "", os.Stdout, os.Stderr))
 	}
+	dir, err := os.MkdirTemp("", "keg-integration-userconfig")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain: create temp user config dir:", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("XDG_CONFIG_HOME", dir); err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain: set XDG_CONFIG_HOME:", err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }
