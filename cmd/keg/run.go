@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
@@ -76,15 +77,27 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		plan.Command = []string{"/bin/bash", "-i"}
 	}
 
-	var auditWriter io.Writer
+	var auditFileWriter io.Writer
 	if plan.AuditFile != "" {
-		af, err := os.OpenFile(plan.AuditFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- trusted user config
-		if err != nil {
-			return fmt.Errorf("open audit file %s: %w", plan.AuditFile, err)
+		if err := os.MkdirAll(filepath.Dir(plan.AuditFile), 0o750); err == nil {
+			af, err := os.OpenFile(plan.AuditFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- trusted user config
+			if err == nil {
+				defer func() { _ = af.Close() }()
+				auditFileWriter = af
+			}
 		}
-		defer func() { _ = af.Close() }()
-		auditWriter = af
 	}
+
+	var verboseWriter io.Writer
+	if c.Bool("verbose") {
+		verboseWriter = os.Stderr
+	}
+
+	inst := plan.InstanceName
+	if inst == "" {
+		inst = filepath.Base(plan.RepoRoot)
+	}
+	auditLogger := orchestrator.NewAuditLogger(auditFileWriter, verboseWriter, inst)
 
 	sb, err := orchestrator.Launch(ctx, plan)
 	if err != nil {
@@ -100,7 +113,7 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		}
 	}()
 
-	if err := orchestrator.StartBackgroundServices(ctx, sb, plan, userCfg, auditWriter); err != nil {
+	if err := orchestrator.StartBackgroundServices(ctx, sb, plan, userCfg, auditLogger); err != nil {
 		fmt.Fprintf(os.Stderr, "keg: services: %v\n", err)
 	}
 

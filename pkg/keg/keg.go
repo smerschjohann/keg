@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
@@ -224,17 +225,25 @@ func Launch(ctx context.Context, repoRoot string, opts ...Option) (*Sandbox, err
 		}
 	})
 
-	var auditWriter io.Writer
+	var auditFileWriter io.Writer
 	if plan.AuditFile != "" {
-		af, err := os.OpenFile(plan.AuditFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- trusted path
-		if err != nil {
-			cancelFn()
-			return nil, fmt.Errorf("open audit file %s: %w", plan.AuditFile, err)
+		if err := os.MkdirAll(filepath.Dir(plan.AuditFile), 0o750); err == nil {
+			af, err := os.OpenFile(plan.AuditFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- trusted path
+			if err != nil {
+				cancelFn()
+				return nil, fmt.Errorf("open audit file %s: %w", plan.AuditFile, err)
+			}
+			cleanups = append(cleanups, func() { _ = af.Close() })
+			auditFileWriter = af
+			plan.AuditWriter = af
 		}
-		cleanups = append(cleanups, func() { _ = af.Close() })
-		auditWriter = af
-		plan.AuditWriter = af
 	}
+
+	inst := plan.InstanceName
+	if inst == "" {
+		inst = filepath.Base(plan.RepoRoot)
+	}
+	auditLogger := orchestrator.NewAuditLogger(auditFileWriter, nil, inst)
 
 	sb, err := orchestrator.Launch(launchCtx, plan)
 	if err != nil {
@@ -252,7 +261,7 @@ func Launch(ctx context.Context, repoRoot string, opts ...Option) (*Sandbox, err
 		cleanups: cleanups,
 	}
 
-	if err := orchestrator.StartBackgroundServices(launchCtx, sb, plan, userCfg, auditWriter); err != nil {
+	if err := orchestrator.StartBackgroundServices(launchCtx, sb, plan, userCfg, auditLogger); err != nil {
 		_ = result.Close()
 		return nil, err
 	}

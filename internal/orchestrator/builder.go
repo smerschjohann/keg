@@ -160,13 +160,13 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	}
 	plan.TmpDir = instanceDir
 
-	if effective.Log.AuditFile != "" {
-		auditPath := effective.Log.AuditFile
-		if expanded, err := config.ExpandPath(auditPath); err == nil {
-			auditPath = expanded
-		}
-		plan.AuditFile = auditPath
+	auditPath := effective.Log.AuditFile
+	if auditPath == "" {
+		auditPath = DefaultAuditPath()
+	} else if expanded, err := config.ExpandPath(auditPath); err == nil {
+		auditPath = expanded
 	}
+	plan.AuditFile = auditPath
 
 	// Secrets: initial fetch
 	if len(repo.Secrets) > 0 {

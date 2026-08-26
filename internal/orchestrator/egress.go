@@ -104,9 +104,6 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 		return fmt.Errorf("egress proxy: channel fd %d not available", FDProxy)
 	}
 	audit := cfg.Audit
-	if audit == nil {
-		audit = os.Stderr
-	}
 	rawTable := s.raw
 	server := proxy.Server{
 		SNIDomains:    cfg.SNIDomains,
@@ -116,9 +113,11 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 			return rawTable != nil && rawTable.check(hostPort)
 		},
 		Audit: func(ev proxy.AuditEvent) {
-			w := bufio.NewWriter(audit)
-			_, _ = fmt.Fprintln(w, proxy.FormatAudit(ev.Allowed, ev.Host))
-			_ = w.Flush()
+			if audit != nil {
+				w := bufio.NewWriter(audit)
+				_, _ = fmt.Fprintln(w, proxy.FormatAudit(ev.Allowed, ev.Host))
+				_ = w.Flush()
+			}
 			slog.Info("egress proxy decision", "allowed", ev.Allowed, "host", ev.Host)
 		},
 	}
