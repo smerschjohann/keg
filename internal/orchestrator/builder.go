@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,8 +36,8 @@ func IsValidInstanceName(name string) bool {
 	return true
 }
 
-// BuildPlan loads and validates all configuration for a sandbox run and
-// produces the orchestrator plan. Errors name the offending file/field.
+// BuildPlan parses and validates configuration for a sandbox run and prepares
+// the filesystem and orchestrator plan without starting the sandbox.
 func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskName string, cacheOverlay Overlay, isolatedCacheName, instanceName string) (Plan, *config.User, error) {
 	root := repoDir
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
@@ -46,14 +47,18 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		root = abs
 	}
 
-	// Repo config: explicit path or <root>/.keg.yaml (required).
+	// Repo config: explicit path or <root>/.keg.yaml (fallback to default).
 	cfgPath := repoCfgPath
 	if cfgPath == "" {
 		cfgPath = filepath.Join(root, ".keg.yaml")
 	}
 	repo, err := config.LoadRepo(cfgPath)
 	if err != nil {
-		return Plan{}, nil, fmt.Errorf("repo %s: %w (create a .keg.yaml or pass --config)", root, err)
+		if errors.Is(err, os.ErrNotExist) && repoCfgPath == "" {
+			repo = &config.Repo{Version: config.SupportedVersion}
+		} else {
+			return Plan{}, nil, fmt.Errorf("repo %s: %w (create a .keg.yaml or pass --config)", root, err)
+		}
 	}
 
 	// User config: optional.

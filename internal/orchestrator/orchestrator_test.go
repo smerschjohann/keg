@@ -613,3 +613,31 @@ env:
 		t.Errorf("plan.EnvSet[CUSTOM_USER_ENV] = %q, want enabled", plan.EnvSet["CUSTOM_USER_ENV"])
 	}
 }
+
+func TestBuildPlan_WithoutRepoLocalFile(t *testing.T) {
+	emptyDir := t.TempDir() // has NO .keg.yaml
+
+	userYAML := `
+vars:
+  global_flag: "active"
+env:
+  set:
+    TEST_VAR: "fallback"
+`
+	userFile := filepath.Join(t.TempDir(), "user-config.yaml")
+	if err := os.WriteFile(userFile, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, _, err := BuildPlan(emptyDir, "", userFile, OverlayPlain, "", OverlayPlain, "", "test-empty-repo")
+	if err != nil {
+		t.Fatalf("BuildPlan without .keg.yaml must succeed, got err: %v", err)
+	}
+
+	if plan.RepoRoot != emptyDir {
+		t.Errorf("plan.RepoRoot = %q, want %q", plan.RepoRoot, emptyDir)
+	}
+	if plan.EnvSet["TEST_VAR"] != "fallback" {
+		t.Errorf("plan.EnvSet[TEST_VAR] = %q, want fallback", plan.EnvSet["TEST_VAR"])
+	}
+}
