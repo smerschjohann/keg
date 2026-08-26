@@ -96,7 +96,7 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 	if file == nil {
 		return fmt.Errorf("egress dns: channel fd %d not available", FDDNS)
 	}
-	table := &rawEndpoints{byIP: map[string]rawEntry{}}
+	table := newRawEndpoints()
 	s.raw = table
 	s.rawCfg = rawCfg{DNSConfig: cfg, Endpoints: endpoints}
 	resolver := &dns.Resolver{
@@ -106,7 +106,7 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 		OnA: func(name string, ips []net.IP) {
 			for _, ep := range s.rawCfg.Endpoints {
 				if name == strings.ToLower(ep.Host) || strings.HasSuffix(name, "."+strings.ToLower(ep.Host)) {
-					table.allow(ep.Host, ips, ep.Ports)
+					table.allow(ep.Host, ips, ep.Ports, DefaultRawCorrelationTTL)
 				}
 			}
 		},
