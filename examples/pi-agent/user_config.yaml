@@ -1,5 +1,5 @@
 # Example user configuration (~/.config/keg/config.yaml or passed via --user-config)
-# Configures the host-side mechanism for fetching dynamic secrets.
+# Configures the host-side mechanism for fetching and refreshing dynamic secrets.
 
 paths:
   storage_base: "/var/lib/containers/storage/sandbox"
@@ -8,9 +8,21 @@ paths:
 secret_sources:
   ai_secret_key:
     # Invokes genkey: genkey <name_of_keg_instance> <seconds_until_token_is_invalidated>
-    cmd: ["examples/pi-agent/genkey", "pi-agent", "30"]
-    interval: 10s
+    cmd: ["examples/pi-agent/genkey", "pi-agent", "10"]
+
+    # ⏱️ Refresh-Intervall: wie oft das Host-Script zur Token-Erneuerung aufgerufen wird.
+    # Mögliche Werte:
+    #   interval: 5s    # Schnelles Rolling für Tests & Demos (z. B. 5 Sekunden)
+    #   interval: 30s   # Typische kurzlebige Session Tokens (z. B. 30 Sekunden)
+    #   interval: 15m   # OAuth / STS Refresh-Zyklen (z. B. 15 Minuten)
+    #   interval: 1h    # Längerlebige API-Tokens (z. B. 1 Stunde)
+    #   interval: 0s    # Einmalig: wird nur beim Start geholt, kein Hintergrund-Refresh
+    interval: 5s
+
+    # ⏱️ Timeout für den genkey-Befehl
     timeout: 5s
+
+    # Fehlerbehandlung: 'keep' (alten Token behalten) oder 'fail' (Sandbox sofort terminieren)
     on_refresh_error: keep
 
 security:
