@@ -17,6 +17,9 @@ import (
 // Sandbox is a running sandbox instance. It owns the host ends of the
 // channel socketpairs and the bwrap child process; Close releases both.
 type Sandbox struct {
+	closeMu sync.Mutex
+	closed  bool
+
 	cmd *exec.Cmd
 
 	waitCh chan waitResult
@@ -311,12 +314,22 @@ func (s *Sandbox) Signal(sig os.Signal) error {
 // listeners first, then the channel host ends (whose closure unwinds the
 // muxado sessions and every stream riding on them).
 func (s *Sandbox) Close() {
-	for _, ln := range s.portListeners {
+	s.closeMu.Lock()
+	if s.closed {
+		s.closeMu.Unlock()
+		return
+	}
+	s.closed = true
+	listeners := s.portListeners
+	s.portListeners = nil
+	ends := s.hostEnds
+	s.hostEnds = nil
+	s.closeMu.Unlock()
+
+	for _, ln := range listeners {
 		_ = ln.Close()
 	}
-	s.portListeners = nil
-	closeFiles(s.hostEnds)
-	s.hostEnds = nil
+	closeFiles(ends)
 }
 
 func closeFiles(files []*os.File) {

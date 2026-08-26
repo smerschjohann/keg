@@ -5,12 +5,12 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M8 vollständig** (inkl. Transparent-Modus,
+> Stand: **Phase 0 + M1–M9 vollständig** (inkl. Transparent-Modus,
 > Port-Rückkanal, Delegations-Kanal C, isolierten Cache-Overlays,
 > Layer-Management mit Stufenlöschung, Parallel-Instanzen via `--name`,
 > `log/slog`-Struktur/Audit-Logging, Fehlerbild-Katalog in `docs/errors.md`,
-> Secrets-Engine `/run/secrets` mit atomarem Refresher, Landlock LSM
-> und CGO/FD-Leak-Checks).
+> Secrets-Engine `/run/secrets` mit atomarem Refresher, Landlock LSM,
+> CGO/FD-Leak-Checks, Go-Library-API `pkg/keg` und Daemon `keg serve`).
 > Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -706,20 +706,25 @@ reaktiviert und stabil).
 
 ## 11. WP-M9 — Go-API & Daemon
 
-**Status:** ⬜ offen.
+**Status:** ✅ vollständig umgesetzt (`pkg/keg`, `internal/daemon`, `keg serve`).
 
-* Refactor: Orchestrator-Kern hinter Schnittstelle; `pkg/keg`:
-  `Launch(opts…)`, `(*Sandbox).Command/Output/SecretPath/Close`, Options-
-  Pattern; Kontext-Abbruch = Sandbox-Down.
-* **Guest-Agent (Kanal D):** Entrypoint bleibt resident; Exec-Requests
-  (spawn/stdin/stdout/stderr-events/signal/exit) über eigene muxado-Session;
-  CLI-Modus verhält sich unverändert (exec transparent).
-* **Daemon:** `keg serve` mit Unix-Socket (Default, `SO_PEERCRED`-Audit)
-  und TCP-Loopback-Opt-in; Token-Pflicht bei Netz-Bind, sonst Startverweigerung;
-  Limits paralleler Sandboxen; v1-Protokoll = Length-Prefix-JSON (**kein
-  gRPC** — Budget §1; Upgrade-Pfad offen).
-* Library-API-Tests: Launch/Exec/Close-Lifecycle, Kontext-Abbruch räumt auf,
-  Policy-Identität zwischen API- und CLI-Pfad (gleiche Engine-Instanz).
+* [x] **Go-Library-API (`pkg/keg`):** `Launch(ctx, repoRoot, opts...)`,
+  `(*Sandbox).Close/Wait/Pid/Signal/SecretPath`, Options-Pattern (`WithEphemeral`,
+  `WithDiskOverlay`, `WithIsolateCaches`, `WithIsolatedCacheName`, `WithName`,
+  `WithAuditFile`, `WithStdin`, `WithStdout`, `WithStderr`, `WithCommand`),
+  Kontext-Abbruch triggert sofortigen Sandbox-Shutdown und Aufräum-Pipeline.
+* [x] **Daemon (`keg serve` & `internal/daemon`):**
+  * Unix-Socket (Default `/tmp/keg.sock` / `$XDG_RUNTIME_DIR/keg/api.sock`,
+    Dir-Mode `0770`, Socket-Mode `0660`, `SO_PEERCRED`-Client-UID-Audit).
+  * TCP-Listener mit strenger Token-Pflicht bei Netz-Bind (Startverweigerung ohne Auth).
+  * Parallele Sandbox-Limits (`--max-sandboxes`).
+  * v1-Wire-Protokoll: Length-Prefixed JSON über `internal/frame` (**kein gRPC**).
+  * Actions: `create`, `exec`, `status`, `list`, `stop` mit duplex Event-Streaming
+    (`stdout`, `stderr`, `exit`, `error`).
+* [x] **Policy-Identität:** `orchestrator.BuildPlan` und `orchestrator.StartBackgroundServices`
+  werden identisch von CLI (`keg run`), Library (`pkg/keg`) und Daemon (`internal/daemon`) verwendet.
+* [x] **Tests:** Unit-Tests in `pkg/keg`, `internal/daemon`, `cmd/keg` sowie
+  Integrationstest in `test/integration/api_test.go` (`TestIntegration_GoLibraryAPI`).
 
 ---
 

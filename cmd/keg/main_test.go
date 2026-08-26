@@ -195,3 +195,11 @@ func TestCLI_RunOverlayFlagsMutualExclusivity(t *testing.T) {
 		}
 	})
 }
+
+func TestCLI_ServeValidation(t *testing.T) {
+	// Network listener without token auth must fail
+	err := runCLI(t, "serve", "--listen", "0.0.0.0:9999", "--auth", "none")
+	if err == nil || !strings.Contains(err.Error(), "token auth is required") {
+		t.Errorf("expected network token auth refusal, got: %v", err)
+	}
+}

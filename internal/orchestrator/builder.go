@@ -1,0 +1,499 @@
+package orchestrator
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/portsfw"
+	"github.com/smerschjohann/keg/internal/runner"
+	"github.com/smerschjohann/keg/internal/secrets"
+	"github.com/smerschjohann/keg/internal/template"
+)
+
+// IsValidInstanceName validates that an instance name consists only of
+// alphanumeric characters, hyphens, and underscores.
+func IsValidInstanceName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// BuildPlan loads and validates all configuration for a sandbox run and
+// produces the orchestrator plan. Errors name the offending file/field.
+func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskName string, cacheOverlay Overlay, isolatedCacheName, instanceName string) (Plan, *config.User, error) {
+	root := repoDir
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+
+	// Repo config: explicit path or <root>/.keg.yaml (required).
+	cfgPath := repoCfgPath
+	if cfgPath == "" {
+		cfgPath = filepath.Join(root, ".keg.yaml")
+	}
+	repo, err := config.LoadRepo(cfgPath)
+	if err != nil {
+		return Plan{}, nil, fmt.Errorf("repo %s: %w (create a .keg.yaml or pass --config)", root, err)
+	}
+
+	// User config: optional.
+	user := &config.User{}
+	userPath := userCfgPath
+	if userPath == "" {
+		userPath = config.DefaultUserPath()
+	}
+	if data, err := os.ReadFile(userPath); err == nil { // #nosec G304 -- user config path
+		parsed, parseErr := config.ParseUser(data)
+		if parseErr != nil {
+			return Plan{}, nil, fmt.Errorf("%s: %w", userPath, parseErr)
+		}
+		user = parsed
+	} else if userCfgPath != "" {
+		return Plan{}, nil, fmt.Errorf("load user config: %w", err)
+	}
+
+	effective := config.MatchRepo(user, root)
+	vars := config.MergeVars(repo.Vars, effective.Vars, nil)
+
+	// Template context: .Vars always, .Env only when user config opts in.
+	tctx := template.Context{Vars: vars}
+	if effective.TemplateEnv.AllowEnv != nil && *effective.TemplateEnv.AllowEnv {
+		tctx.Env = envMap()
+	}
+	if err := resolveTemplates(repo, tctx); err != nil {
+		return Plan{}, nil, err
+	}
+
+	plan := Plan{
+		RepoRoot:    root,
+		SandboxHome: "/home/sandbox",
+		Mounts:      repo.Mounts,
+		EnvUnset:    repo.Env.Unset,
+		EnvSet:      map[string]string{},
+		BwrapArgs:   repo.BwrapArgs,
+		AllowWeakBwrap: effective.Security.AllowWeakBwrap != nil &&
+			*effective.Security.AllowWeakBwrap,
+		Overlay:      overlay,
+		SNIDomains:   repo.Network.SNIDomains,
+		TCPEndpoints: repo.Network.TCPEndpoints,
+		Transparent:  repo.Network.Mode == "transparent",
+		Landlock:     effective.Security.Landlock,
+	}
+	if plan.Landlock == "" {
+		plan.Landlock = "auto"
+	}
+	plan.EnvSet[EnvLandlock] = plan.Landlock
+	for k, v := range repo.Env.Set {
+		plan.EnvSet[k] = v
+	}
+
+	// Host-side temporary instance directory
+	tmpBase := effective.Paths.TmpBase
+	if expanded, err := config.ExpandPath(tmpBase); err == nil && expanded != "" {
+		tmpBase = expanded
+	} else {
+		tmpBase = os.TempDir()
+	}
+	if tmpBase != "" {
+		_ = os.MkdirAll(tmpBase, 0o750) // #nosec G703 -- trusted user config
+	}
+	var instanceDir string
+	if instanceName != "" {
+		if !IsValidInstanceName(instanceName) {
+			return Plan{}, nil, fmt.Errorf("invalid instance name %q: must contain only letters, digits, underscores, and hyphens", instanceName)
+		}
+		instanceDir = filepath.Join(tmpBase, "keg-"+instanceName)
+		if err := os.MkdirAll(instanceDir, 0o750); err != nil { // #nosec G703 -- trusted dir
+			return Plan{}, nil, fmt.Errorf("create instance dir %s: %w", instanceDir, err)
+		}
+		plan.InstanceName = instanceName
+	} else {
+		d, err := os.MkdirTemp(tmpBase, "keg-")
+		if err != nil {
+			return Plan{}, nil, fmt.Errorf("create instance dir: %w", err)
+		}
+		instanceDir = d
+	}
+	plan.TmpDir = instanceDir
+
+	if effective.Log.AuditFile != "" {
+		auditPath := effective.Log.AuditFile
+		if expanded, err := config.ExpandPath(auditPath); err == nil {
+			auditPath = expanded
+		}
+		plan.AuditFile = auditPath
+	}
+
+	// Secrets: initial fetch
+	if len(repo.Secrets) > 0 {
+		secretsDir := filepath.Join(plan.TmpDir, "secrets")
+		if err := secrets.FetchInitial(context.Background(), repo.Secrets, effective.SecretSources, secretsDir); err != nil {
+			return Plan{}, nil, err
+		}
+		plan.SecretDir = secretsDir
+		plan.Secrets = repo.Secrets
+		plan.SecretSources = effective.SecretSources
+		for _, s := range repo.Secrets {
+			if s.Env != "" {
+				plan.EnvSet[s.Env] = "/run/secrets/" + s.Name
+			}
+		}
+	}
+
+	// Language templates
+	if len(repo.Templates) > 0 {
+		tc := config.DetectToolchainPaths(exec.LookPath, config.HostGoEnv)
+		if effective.Paths.GoModCache != "" {
+			if exp, expErr := config.ExpandPath(effective.Paths.GoModCache); expErr == nil {
+				tc.GoModCache = exp
+			}
+		}
+		if effective.Paths.GoBuildCache != "" {
+			if exp, expErr := config.ExpandPath(effective.Paths.GoBuildCache); expErr == nil {
+				tc.GoBuildCache = exp
+			}
+		}
+		tplMounts, tplEnv, terr := config.ExpandTemplates(repo.Templates, plan.SandboxHome, tc)
+		if terr != nil {
+			return Plan{}, nil, fmt.Errorf("templates: %w", terr)
+		}
+		for _, m := range tplMounts {
+			src := m.Src
+			if expanded, expErr := config.ExpandPath(src); expErr == nil {
+				src = expanded
+			}
+			mount := config.Mount{Src: src, Dest: m.Dest, Mode: m.Mode}
+			if cacheOverlay == OverlayEphemeral {
+				mount.Mode = config.MountEphemeral
+			} else if cacheOverlay == OverlayDisk && isolatedCacheName != "" {
+				mount.Mode = config.MountDisk
+				storageBase := effective.Paths.StorageBase
+				if storageBase == "" {
+					storageBase = "/var/lib/containers/storage/sandbox"
+				}
+				if expanded, expErr := config.ExpandPath(storageBase); expErr == nil {
+					storageBase = expanded
+				}
+				cacheDir := filepath.Join(storageBase, "cache-"+isolatedCacheName)
+				key := filepath.Base(m.Dest)
+				if key == "" || key == "." || key == "/" {
+					key = "cache"
+				}
+				rwDir := filepath.Join(cacheDir, key+"-rw")
+				workDir := filepath.Join(cacheDir, key+"-work")
+				for _, sub := range []string{rwDir, workDir} {
+					if mkErr := os.MkdirAll(sub, 0o750); mkErr != nil { // #nosec G703 -- trusted path
+						return Plan{}, nil, fmt.Errorf("prepare cache layer %s: %w", cacheDir, mkErr)
+					}
+				}
+				mount.OverlayRW = rwDir
+				mount.OverlayWork = workDir
+			}
+			plan.Mounts = append(plan.Mounts, mount)
+		}
+		for k, v := range tplEnv {
+			if _, exists := plan.EnvSet[k]; !exists {
+				plan.EnvSet[k] = v
+			}
+		}
+		if tc.GoRootNeedsBind() {
+			plan.Mounts = append(plan.Mounts, config.Mount{Src: tc.GoRoot, Dest: tc.GoRoot, Mode: config.MountRO})
+			plan.ExtraPathDirs = []string{tc.GoRoot + "/bin"}
+		}
+	}
+
+	if repo.Network.Mode != "transparent" {
+		for k, v := range ProxyEnv(repo.Network.SNIDomains) {
+			plan.EnvSet[k] = v
+		}
+	}
+
+	if len(repo.Network.SNIDomains) > 0 ||
+		len(repo.Network.TCPEndpoints) > 0 ||
+		repo.Network.DNS.Enabled || len(repo.Network.DNS.Hosts) > 0 {
+		rcPath := filepath.Join(plan.TmpDir, "resolv.conf")
+		const resolvConf = "nameserver 127.0.0.1\noptions timeout:1 retries:1\n"
+		if err := os.WriteFile(rcPath, []byte(resolvConf), 0o600); err != nil { // #nosec G703 -- keg-created dir
+			return Plan{}, nil, fmt.Errorf("write resolv.conf: %w", err)
+		}
+		plan.ResolvConf = rcPath
+		upstream := repo.Network.DNS.Upstream
+		if upstream == "" {
+			upstream = FirstHostNameserver()
+		}
+		whitelist := append([]string{}, repo.Network.SNIDomains...)
+		for _, ep := range repo.Network.TCPEndpoints {
+			whitelist = append(whitelist, strings.ToLower(ep.Host))
+		}
+		plan.EgressDNS = &DNSConfig{
+			Hosts:     repo.Network.DNS.Hosts,
+			Whitelist: whitelist,
+			Upstream:  upstream,
+		}
+		hostsPath := filepath.Join(plan.TmpDir, "hosts")
+		content := BuildHostsFile(repo.Network.DNS.Hosts)
+		if err := os.WriteFile(hostsPath, []byte(content), 0o600); err != nil { // #nosec G703 -- keg-created dir
+			return Plan{}, nil, fmt.Errorf("write hosts file: %w", err)
+		}
+		plan.HostsFile = hostsPath
+	}
+
+	if len(repo.Ports) > 0 {
+		resolved, err := portsfw.Resolve(repo.Ports, func() (*net.Listener, error) {
+			var lc net.ListenConfig
+			ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+			if err != nil {
+				return nil, err
+			}
+			return &ln, nil
+		})
+		if err != nil {
+			for _, p := range resolved {
+				if p.Listener != nil {
+					_ = p.Listener.Close()
+				}
+			}
+			return Plan{}, nil, fmt.Errorf("resolve ports: %w", err)
+		}
+		plan.Ports = resolved
+		for k, v := range portsfw.PortEnv(resolved) {
+			plan.EnvSet[k] = v
+		}
+		plan.EnvSet[EnvPortsForward] = portsfw.FormatAllowed(resolved)
+	}
+
+	tasks := repo.DelegatedTasks
+	if env := os.Getenv("RUNNER_WHITELIST"); env != "" {
+		for _, name := range strings.Split(env, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				tasks.Exact = append(tasks.Exact, name)
+			}
+		}
+	}
+	tasks.Exact = append(tasks.Exact, effective.Runner.ExtraExact...)
+	tasks.Prefixes = append(tasks.Prefixes, effective.Runner.ExtraPrefixes...)
+	tasks.Raw = append(tasks.Raw, effective.Runner.ExtraRaw...)
+	if len(tasks.Exact) > 0 || len(tasks.Prefixes) > 0 || len(tasks.Raw) > 0 {
+		plan.DelegatedTasks = tasks
+		plan.EnableRunner = true
+		plan.EnvSet[EnvDelegation] = "1"
+		hooksDir := filepath.Join(instanceDir, "hooks")
+		if err := os.MkdirAll(hooksDir, 0o700); err != nil { // #nosec G703 -- trusted dir
+			return Plan{}, nil, fmt.Errorf("create hooks dir: %w", err)
+		}
+		plan.HooksDir = hooksDir
+	}
+
+	if overlay == OverlayDisk {
+		storageBase := effective.Paths.StorageBase
+		if storageBase == "" {
+			storageBase = "/var/lib/containers/storage/sandbox"
+		}
+		if expanded, err := config.ExpandPath(storageBase); err == nil {
+			storageBase = expanded
+		}
+		layer := filepath.Join(storageBase, diskName)
+		for _, sub := range []string{"rw", "work"} {
+			if err := os.MkdirAll(filepath.Join(layer, sub), 0o750); err != nil { // #nosec G703 -- storage_base from trusted local user config
+				return Plan{}, nil, fmt.Errorf("prepare disk layer %s: %w", layer, err)
+			}
+		}
+		plan.DiskLayerRW = filepath.Join(layer, "rw")
+		plan.DiskLayerWork = filepath.Join(layer, "work")
+	}
+
+	return plan, user, nil
+}
+
+// StartBackgroundServices starts all configured egress, proxy, DNS, port-forwarding,
+// delegation runner, and secret refresh services for a running sandbox.
+func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *config.User, auditWriter io.Writer) error {
+	// DNS channel
+	if plan.EgressDNS != nil {
+		dnsCfg := *plan.EgressDNS
+		if auditWriter != nil {
+			dnsCfg.Audit = auditWriter
+		}
+		if err := sb.StartEgressDNS(dnsCfg, plan.TCPEndpoints); err != nil {
+			return fmt.Errorf("start egress dns: %w", err)
+		}
+	}
+
+	// Proxy channel
+	if len(plan.SNIDomains) > 0 || len(plan.TCPEndpoints) > 0 {
+		proxyAudit := auditWriter
+		if proxyAudit == nil {
+			proxyAudit = os.Stderr
+		}
+		err := sb.StartEgressProxy(EgressProxyConfig{
+			SNIDomains:    plan.SNIDomains,
+			UpstreamProxy: UpstreamProxyFromEnv(os.Getenv),
+			Audit:         proxyAudit,
+		})
+		if err != nil {
+			return fmt.Errorf("start egress proxy: %w", err)
+		}
+	}
+
+	// Port back-channel
+	if len(plan.Ports) > 0 {
+		if err := sb.StartPortsForward(plan.Ports); err != nil {
+			return fmt.Errorf("start ports forward: %w", err)
+		}
+	}
+
+	// Delegation runner channel
+	if plan.EnableRunner {
+		var runnerCfg config.RunnerCfg
+		if user != nil {
+			runnerCfg = user.Runner
+		}
+		engine, engineErr := runner.NewEngine(plan.DelegatedTasks, runnerCfg)
+		if engineErr != nil {
+			return fmt.Errorf("delegation whitelist: %w", engineErr)
+		}
+		serverCfg := runner.ServerConfig{
+			Engine:   engine,
+			RepoRoot: plan.RepoRoot,
+			HooksDir: plan.HooksDir,
+		}
+		if auditWriter != nil {
+			serverCfg.Audit = func(allowed bool, task string, reason string) {
+				w := bufio.NewWriter(auditWriter)
+				verdict := "ERLAUBT"
+				if !allowed {
+					verdict = "BLOCKIERT"
+				}
+				if reason != "" && !allowed {
+					_, _ = fmt.Fprintf(w, "DELEGATION %s %s: %s\n", verdict, task, reason)
+				} else {
+					_, _ = fmt.Fprintf(w, "DELEGATION %s %s\n", verdict, task)
+				}
+				_ = w.Flush()
+			}
+		}
+		if err := sb.StartRunner(serverCfg); err != nil {
+			return fmt.Errorf("start delegation runner: %w", err)
+		}
+	}
+
+	// Secret background refresher
+	if len(plan.SecretDir) > 0 && len(plan.Secrets) > 0 {
+		refresher := secrets.NewRefresher()
+		go refresher.Start(ctx, plan.Secrets, plan.SecretSources, plan.SecretDir, func(name, status string) {
+			if auditWriter != nil {
+				w := bufio.NewWriter(auditWriter)
+				_, _ = fmt.Fprintf(w, "SECRET %s %s\n", name, status)
+				_ = w.Flush()
+			}
+			slog.Info("secret refresh", "name", name, "status", status)
+		}, func(err error) {
+			slog.Error("secret refresh fatal error", "err", err)
+			_ = sb.Signal(syscall.SIGTERM)
+		})
+	}
+
+	return nil
+}
+
+// FirstHostNameserver returns the first nameserver from the host's /etc/resolv.conf.
+func FirstHostNameserver() string {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return "127.0.0.53:53"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "nameserver") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				ip := fields[1]
+				if !strings.Contains(ip, ":") {
+					return ip + ":53"
+				}
+				return "[" + ip + "]:53"
+			}
+		}
+	}
+	return "127.0.0.53:53"
+}
+
+// BuildHostsFile renders a static /etc/hosts file from dns.hosts.
+func BuildHostsFile(hosts map[string]string) string {
+	var b strings.Builder
+	b.WriteString("127.0.0.1 localhost\n")
+	b.WriteString("::1 localhost\n")
+	for pattern, ip := range hosts {
+		name := strings.TrimPrefix(pattern, "*.")
+		fmt.Fprintf(&b, "%s %s\n", ip, name)
+	}
+	return b.String()
+}
+
+// UpstreamProxyFromEnv picks the restrictive corporate proxy from environment variables.
+func UpstreamProxyFromEnv(getenv func(string) string) string {
+	for _, k := range []string{
+		"HTTPS_PROXY", "https_proxy",
+		"HTTP_PROXY", "http_proxy",
+	} {
+		if v := getenv(k); v != "" {
+			v = strings.TrimPrefix(v, "http://")
+			v = strings.TrimPrefix(v, "https://")
+			return v
+		}
+	}
+	return ""
+}
+
+func envMap() map[string]string {
+	res := map[string]string{}
+	for _, kv := range os.Environ() {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			res[parts[0]] = parts[1]
+		}
+	}
+	return res
+}
+
+func resolveTemplates(r *config.Repo, tctx template.Context) error {
+	for i := range r.Mounts {
+		src, err := template.Apply(r.Mounts[i].Src, tctx)
+		if err != nil {
+			return fmt.Errorf("mounts[%d].src: %w", i, err)
+		}
+		r.Mounts[i].Src = src
+		dest, err := template.Apply(r.Mounts[i].Dest, tctx)
+		if err != nil {
+			return fmt.Errorf("mounts[%d].dest: %w", i, err)
+		}
+		r.Mounts[i].Dest = dest
+	}
+	for k, v := range r.Env.Set {
+		rendered, err := template.Apply(v, tctx)
+		if err != nil {
+			return fmt.Errorf("env.set[%s]: %w", k, err)
+		}
+		r.Env.Set[k] = rendered
+	}
+	return nil
+}

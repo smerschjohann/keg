@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 
@@ -81,10 +80,34 @@ func NewCommand() *cli.Command {
 			{
 				Name:  "serve",
 				Usage: "start the remote-control daemon (unix socket/TCP)",
-				Action: func(_ context.Context, _ *cli.Command) error {
-					fmt.Println("serve: not implemented yet (WP-M9)")
-					return nil
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "listen",
+						Aliases: []string{"l"},
+						Usage:   "listen address: unix:///path/to/sock or host:port",
+					},
+					&cli.StringFlag{
+						Name:  "auth",
+						Usage: "authentication mode: token or none",
+						Value: "none",
+					},
+					&cli.StringFlag{
+						Name:    "token",
+						Usage:   "authentication token (required for network binds)",
+						Sources: cli.EnvVars("KEG_AUTH_TOKEN"),
+					},
+					&cli.IntFlag{
+						Name:  "max-sandboxes",
+						Usage: "maximum number of concurrent sandboxes",
+						Value: 10,
+					},
+					&cli.BoolFlag{
+						Name:    "verbose",
+						Aliases: []string{"v"},
+						Usage:   "enable debug logging",
+					},
 				},
+				Action: serveAction,
 			},
 		},
 	}
