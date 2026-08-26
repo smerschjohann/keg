@@ -64,6 +64,11 @@ func NewCommand() *cli.Command {
 						Name:  "isolated-cache-name",
 						Usage: "use a persistent on-disk cache layer with the given NAME",
 					},
+					&cli.StringFlag{
+						Name:    "name",
+						Aliases: []string{"n"},
+						Usage:   "instance name for deterministic instance directories (enables parallel sandboxes)",
+					},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return runAction(ctx, c)

@@ -478,3 +478,58 @@ func waitForEvent(t *testing.T, conn io.Reader, needle string) Event {
 		return Event{}
 	}
 }
+
+func TestServer_Audit(t *testing.T) {
+	type auditRec struct {
+		allowed bool
+		task    string
+		reason  string
+	}
+	var (
+		mu     sync.Mutex
+		audits []auditRec
+	)
+
+	cfg := ServerConfig{
+		Engine:   baseEngine(t),
+		JustBin:  fakeJustBin(t),
+		RepoRoot: t.TempDir(),
+		Audit: func(allowed bool, task string, reason string) {
+			mu.Lock()
+			defer mu.Unlock()
+			audits = append(audits, auditRec{allowed, task, reason})
+		},
+	}
+
+	client, server := pipeSessions(t)
+	go func() { _ = ServeSession(server, cfg) }()
+
+	// 1. Allowed request
+	stream1 := openStream(t, client)
+	if _, err := stream1.Write(mustFrame(encodeReq([]string{"test-playwright", "foo"}, ""))); err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	_ = classify(readEvents(t, stream1))
+	_ = stream1.Close()
+
+	// 2. Denied request
+	stream2 := openStream(t, client)
+	if _, err := stream2.Write(mustFrame(encodeReq([]string{"forbidden-job"}, ""))); err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	_ = classify(readEvents(t, stream2))
+	_ = stream2.Close()
+	_ = client.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(audits) != 2 {
+		t.Fatalf("audits count = %d, want 2 (%+v)", len(audits), audits)
+	}
+	if !audits[0].allowed || !strings.Contains(audits[0].task, "test-playwright") {
+		t.Errorf("audit 0 = %+v, want allowed test-playwright", audits[0])
+	}
+	if audits[1].allowed || !strings.Contains(audits[1].task, "forbidden-job") {
+		t.Errorf("audit 1 = %+v, want denied forbidden-job", audits[1])
+	}
+}

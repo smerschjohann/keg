@@ -35,6 +35,8 @@ type ServerConfig struct {
 	// with core.hooksPath pointed at it so a malicious repo cannot plant
 	// host-side hooks (THREAT_MODEL §5.4). Empty disables suppression.
 	HooksDir string
+	// Audit, if set, receives task execution decisions (allowed, task representation, reason).
+	Audit func(allowed bool, task string, reason string)
 }
 
 // ServeSession serves jobs over one muxado session (the host end of the
@@ -79,6 +81,9 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 	argv := DecodeStrings(req.ArgvB64)
 
 	decision := cfg.Engine.Match(argv)
+	if cfg.Audit != nil {
+		cfg.Audit(decision.Allow, strings.Join(argv, " "), decision.Reason)
+	}
 	if !decision.Allow {
 		writeEvent(conn, Event{Type: EventDenied, Message: decision.Reason})
 		return

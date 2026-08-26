@@ -34,6 +34,8 @@ type Resolver struct {
 	// and its A answers — used by the caller to correlate IPs back to
 	// names for tcp_endpoints policy.
 	OnA func(name string, ips []net.IP)
+	// Audit, if set, receives whitelist decisions (allowed, query name).
+	Audit func(allowed bool, name string)
 }
 
 // HandleQuery takes one wire-format query and returns the wire-format
@@ -48,6 +50,9 @@ func (r *Resolver) HandleQuery(query []byte) []byte {
 	name := strings.TrimSuffix(strings.ToLower(q.Question[0].Name), ".")
 
 	if ip, ok := lookupHosts(r.Hosts, name); ok {
+		if r.Audit != nil {
+			r.Audit(true, name)
+		}
 		m := new(miek.Msg)
 		m.SetReply(q)
 		m.Authoritative = true
@@ -58,7 +63,14 @@ func (r *Resolver) HandleQuery(query []byte) []byte {
 	}
 
 	if !matchZone(name, r.Whitelist) {
+		if r.Audit != nil {
+			r.Audit(false, name)
+		}
 		return nxdomain(q, query)
+	}
+
+	if r.Audit != nil {
+		r.Audit(true, name)
 	}
 
 	resp, err := r.forward(q)

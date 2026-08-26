@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -118,6 +119,7 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 			w := bufio.NewWriter(audit)
 			_, _ = fmt.Fprintln(w, proxy.FormatAudit(ev.Allowed, ev.Host))
 			_ = w.Flush()
+			slog.Info("egress proxy decision", "allowed", ev.Allowed, "host", ev.Host)
 		},
 	}
 	go func() { _ = proxy.Serve(muxado.Server(file, nil), server) }()
@@ -139,6 +141,18 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 		Hosts:     cfg.Hosts,
 		Whitelist: cfg.Whitelist,
 		Upstream:  cfg.Upstream,
+		Audit: func(allowed bool, name string) {
+			if cfg.Audit != nil {
+				w := bufio.NewWriter(cfg.Audit)
+				verdict := "ERLAUBT"
+				if !allowed {
+					verdict = "BLOCKIERT"
+				}
+				_, _ = fmt.Fprintf(w, "DNS %s %s\n", verdict, name)
+				_ = w.Flush()
+			}
+			slog.Info("egress dns decision", "allowed", allowed, "name", name)
+		},
 		OnA: func(name string, ips []net.IP) {
 			for _, ep := range s.rawCfg.Endpoints {
 				if name == strings.ToLower(ep.Host) || strings.HasSuffix(name, "."+strings.ToLower(ep.Host)) {
@@ -159,6 +173,13 @@ func (s *Sandbox) StartRunner(cfg runner.ServerConfig) error {
 	file := s.Channel(FDRunner)
 	if file == nil {
 		return fmt.Errorf("runner: channel fd %d not available", FDRunner)
+	}
+	origAudit := cfg.Audit
+	cfg.Audit = func(allowed bool, task string, reason string) {
+		if origAudit != nil {
+			origAudit(allowed, task, reason)
+		}
+		slog.Info("delegation decision", "allowed", allowed, "task", task, "reason", reason)
 	}
 	go func() { _ = runner.ServeSession(muxado.Server(file, nil), cfg) }()
 	return nil

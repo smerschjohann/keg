@@ -211,3 +211,41 @@ func TestResolver_ZoneWildcardIsMultiLevel(t *testing.T) {
 		t.Fatal("name outside zone was forwarded")
 	}
 }
+
+func TestResolver_Audit(t *testing.T) {
+	t.Parallel()
+	type auditRec struct {
+		allowed bool
+		name    string
+	}
+	var audits []auditRec
+
+	r := Resolver{
+		Hosts:     map[string]string{"db.local": "127.0.0.1"},
+		Whitelist: []string{"allowed.example.com"},
+		Upstream:  unreachableUpstream(t),
+		Audit: func(allowed bool, name string) {
+			audits = append(audits, auditRec{allowed, name})
+		},
+	}
+
+	// 1. Hosts match (allowed)
+	r.HandleQuery(mustQuery(t, "db.local"))
+	// 2. Whitelist match (allowed, forward attempt)
+	r.HandleQuery(mustQuery(t, "allowed.example.com"))
+	// 3. Deny (blocked)
+	r.HandleQuery(mustQuery(t, "denied.example.com"))
+
+	if len(audits) != 3 {
+		t.Fatalf("audits count = %d, want 3", len(audits))
+	}
+	if !audits[0].allowed || audits[0].name != "db.local" {
+		t.Errorf("audit 0 = %+v, want allowed db.local", audits[0])
+	}
+	if !audits[1].allowed || audits[1].name != "allowed.example.com" {
+		t.Errorf("audit 1 = %+v, want allowed allowed.example.com", audits[1])
+	}
+	if audits[2].allowed || audits[2].name != "denied.example.com" {
+		t.Errorf("audit 2 = %+v, want denied denied.example.com", audits[2])
+	}
+}

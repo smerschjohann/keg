@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -18,10 +21,24 @@ import (
 	"github.com/smerschjohann/keg/internal/template"
 )
 
+// isValidInstanceName validates that an instance name consists only of
+// alphanumeric characters, hyphens, and underscores.
+func isValidInstanceName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 // buildRunPlan loads and validates all configuration for a sandbox run and
 // produces the orchestrator plan. It performs no process management —
 // Launch owns that. Errors name the offending file/field.
-func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator.Overlay, diskName string, cacheOverlay orchestrator.Overlay, isolatedCacheName string) (orchestrator.Plan, error) {
+func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator.Overlay, diskName string, cacheOverlay orchestrator.Overlay, isolatedCacheName, instanceName string) (orchestrator.Plan, error) {
 	root := repoDir
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
@@ -86,6 +103,43 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	}
 	for k, v := range repo.Env.Set {
 		plan.EnvSet[k] = v
+	}
+
+	// Prepare host-side instance temporary directory.
+	tmpBase := effective.Paths.TmpBase
+	if expanded, err := config.ExpandPath(tmpBase); err == nil && expanded != "" {
+		tmpBase = expanded
+	} else {
+		tmpBase = os.TempDir()
+	}
+	if tmpBase != "" {
+		_ = os.MkdirAll(tmpBase, 0o750) // #nosec G703 -- path from trusted local user config
+	}
+	var instanceDir string
+	if instanceName != "" {
+		if !isValidInstanceName(instanceName) {
+			return orchestrator.Plan{}, fmt.Errorf("invalid instance name %q: must contain only letters, digits, underscores, and hyphens", instanceName)
+		}
+		instanceDir = filepath.Join(tmpBase, "keg-"+instanceName)
+		if err := os.MkdirAll(instanceDir, 0o750); err != nil { // #nosec G703 -- trusted dir
+			return orchestrator.Plan{}, fmt.Errorf("create instance dir %s: %w", instanceDir, err)
+		}
+		plan.InstanceName = instanceName
+	} else {
+		d, err := os.MkdirTemp(tmpBase, "keg-")
+		if err != nil {
+			return orchestrator.Plan{}, fmt.Errorf("create instance dir: %w", err)
+		}
+		instanceDir = d
+	}
+	plan.TmpDir = instanceDir
+
+	if effective.Log.AuditFile != "" {
+		auditPath := effective.Log.AuditFile
+		if expanded, err := config.ExpandPath(auditPath); err == nil {
+			auditPath = expanded
+		}
+		plan.AuditFile = auditPath
 	}
 
 	// Language templates (CONCEPT.md §4.6) are additive building blocks:
@@ -230,33 +284,6 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		plan.EnvSet[orchestrator.EnvPortsForward] = portsfw.FormatAllowed(resolved)
 	}
 
-	// Prepare host-side directories per overlay mode.
-	tmpBase := effective.Paths.TmpBase
-	if expanded, err := config.ExpandPath(tmpBase); err == nil && expanded != "" {
-		tmpBase = expanded
-	} else {
-		tmpBase = os.TempDir()
-	}
-	instanceDir := ""
-	if tmpBase != "" {
-		// tmpBase originates from the user config; honoring machine-local
-		// paths is keg's core function, traversal is not a threat here.
-		if err := os.MkdirAll(tmpBase, 0o750); err == nil { // #nosec G703 -- path from trusted local user config
-
-			if d, mkErr := os.MkdirTemp(tmpBase, "keg-"); mkErr == nil {
-				instanceDir = d
-			}
-		}
-	}
-	if instanceDir == "" {
-		d, err2 := os.MkdirTemp("", "keg-")
-		if err2 != nil {
-			return orchestrator.Plan{}, fmt.Errorf("create instance dir: %w", err2)
-		}
-		instanceDir = d
-	}
-	plan.TmpDir = instanceDir
-
 	// Delegation channel (Kanal C): carry the repo whitelist into the plan,
 	// export the guest marker and prepare the empty hooks dir used to
 	// suppress host git hooks in delegated jobs (THREAT_MODEL §5.4).
@@ -299,7 +326,6 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		for _, sub := range []string{"rw", "work"} {
 			// layer dir from trusted local user config (storage_base)
 			if err := os.MkdirAll(filepath.Join(layer, sub), 0o750); err != nil { // #nosec G703 -- storage_base from trusted local user config
-
 				return orchestrator.Plan{}, fmt.Errorf("prepare disk layer %s: %w", layer, err)
 			}
 		}
@@ -324,6 +350,12 @@ func closePortListeners(ports []portsfw.ResolvedPort) {
 // bwrap into the reexec guest, forward signals, wait and mirror the exit
 // code.
 func runAction(ctx context.Context, c *cliCommand) error {
+	if c.Bool("verbose") {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	} else {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	}
+
 	repoDir := c.String("repo")
 	if repoDir == "" {
 		var err error
@@ -355,13 +387,25 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		cacheOverlay = orchestrator.OverlayDisk
 	}
 
-	plan, err := buildRunPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName)
+	instanceName := c.String("name")
+
+	plan, err := buildRunPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName, instanceName)
 	if err != nil {
 		return err
 	}
 	plan.Command = c.Args().Slice()
 	if len(plan.Command) == 0 {
 		plan.Command = []string{"/bin/bash", "-i"}
+	}
+
+	var auditWriter io.Writer
+	if plan.AuditFile != "" {
+		af, err := os.OpenFile(plan.AuditFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- trusted user config
+		if err != nil {
+			return fmt.Errorf("open audit file %s: %w", plan.AuditFile, err)
+		}
+		defer func() { _ = af.Close() }()
+		auditWriter = af
 	}
 
 	sb, err := orchestrator.Launch(ctx, plan)
@@ -381,14 +425,22 @@ func runAction(ctx context.Context, c *cliCommand) error {
 	// Serve egress channel A while the sandbox runs; closing the sandbox
 	// tears the session down (THREAT_MODEL §8.1: only controlled channels).
 	if plan.EgressDNS != nil {
+		if auditWriter != nil {
+			plan.EgressDNS.Audit = auditWriter
+		}
 		if err := sb.StartEgressDNS(*plan.EgressDNS, plan.TCPEndpoints); err != nil {
 			fmt.Fprintf(os.Stderr, "keg: egress dns: %v\n", err)
 		}
 	}
 	if len(plan.SNIDomains) > 0 || len(plan.TCPEndpoints) > 0 {
+		proxyAudit := auditWriter
+		if proxyAudit == nil {
+			proxyAudit = os.Stderr
+		}
 		err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
 			SNIDomains:    plan.SNIDomains,
 			UpstreamProxy: upstreamProxyFromEnv(os.Getenv),
+			Audit:         proxyAudit,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "keg: egress proxy: %v\n", err)
@@ -410,11 +462,27 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		if engineErr != nil {
 			return fmt.Errorf("delegation whitelist: %w", engineErr)
 		}
-		if err := sb.StartRunner(runner.ServerConfig{
+		runnerCfg := runner.ServerConfig{
 			Engine:   engine,
 			RepoRoot: plan.RepoRoot,
 			HooksDir: plan.HooksDir,
-		}); err != nil {
+		}
+		if auditWriter != nil {
+			runnerCfg.Audit = func(allowed bool, task string, reason string) {
+				w := bufio.NewWriter(auditWriter)
+				verdict := "ERLAUBT"
+				if !allowed {
+					verdict = "BLOCKIERT"
+				}
+				if reason != "" && !allowed {
+					_, _ = fmt.Fprintf(w, "DELEGATION %s %s: %s\n", verdict, task, reason)
+				} else {
+					_, _ = fmt.Fprintf(w, "DELEGATION %s %s\n", verdict, task)
+				}
+				_ = w.Flush()
+			}
+		}
+		if err := sb.StartRunner(runnerCfg); err != nil {
 			fmt.Fprintf(os.Stderr, "keg: delegation runner: %v\n", err)
 		}
 	}

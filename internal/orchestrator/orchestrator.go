@@ -138,6 +138,12 @@ type Plan struct {
 	// ExtraPathDirs are prepended to the sandbox PATH (e.g. GOROOT/bin for
 	// toolchains bound outside /usr).
 	ExtraPathDirs []string
+	// InstanceName identifies a named sandbox instance.
+	InstanceName string
+	// AuditFile is the path to the optional audit log file (log.audit_file in user config).
+	AuditFile string
+	// AuditWriter optionally receives audit decision lines from egress and runner channels.
+	AuditWriter io.Writer
 
 	Command []string // command to exec after `--`
 }
@@ -165,6 +171,8 @@ type DNSConfig struct {
 	Whitelist []string
 	// Upstream resolver address ("host:port").
 	Upstream string
+	// Audit receives "DNS <ERLAUBT|BLOCKIERT> <name>" decision lines; nil = disabled.
+	Audit io.Writer
 }
 
 // WeakFlags returns the isolation-weakening flags found in args.

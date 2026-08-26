@@ -5,9 +5,10 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M6 vollständig** (inkl. Transparent-Modus,
-> Port-Rückkanal, Delegations-Kanal C, isolierten Cache-Overlays und
-> Layer-Management mit Stufenlöschung).
+> Stand: **Phase 0 + M1–M7 vollständig** (inkl. Transparent-Modus,
+> Port-Rückkanal, Delegations-Kanal C, isolierten Cache-Overlays,
+> Layer-Management mit Stufenlöschung, Parallel-Instanzen via `--name`,
+> `log/slog`-Struktur/Audit-Logging und Fehlerbild-Katalog in `docs/errors.md`).
 > Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -671,12 +672,13 @@ reaktiviert und stabil).
 
 ## 9. WP-M7 — Polish
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt.
 
-* `log/slog`-strukturiertes Logging; Audit-Datei optional (User-Config).
-* Parallel-Instanzen (`--name`, deterministische Pfade).
-* Fehlerbild-Katalog als `docs/errors.md` (Texte = Testexpectations).
-* Race-Detector sauber; goroutine-leak-check in allen Server-Tests.
+* [x] `log/slog`-strukturiertes Logging über alle Komponenten (Proxy, DNS, Runner) und CLI-Verbosity-Flag (`--verbose`/`-v`).
+* [x] Optionale Audit-Datei (`log.audit_file` in User-Config) für thread-sicheres Logging aller Whitelist- und Delegationsentscheidungen (`ERLAUBT`/`BLOCKIERT`).
+* [x] Parallel-Instanzen via `--name NAME` (`-n`) mit deterministischen Instanzverzeichnissen `<tmp_base>/keg-<NAME>` und strenger Namensvalidierung.
+* [x] Fehlerbild-Katalog als `docs/errors.md` (Texte = Testexpectations).
+* [x] Race-Detector sauber (`make test -race` fehlerfrei); Goroutine-Leak-Checks und Session-Cleanup in allen Server-Tests.
 
 ---
 
@@ -752,10 +754,11 @@ nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
 Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 ✅** (§7.1, §7.2
-vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung).
-Erster nutzbarer Schnitt nach M5/M6 vollständig für den Bestands-Workflow nutzbar:
+vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung) · **M7 ✅** (Parallel-Instanzen, Audit/Slog-Logging, Fehlerkatalog).
+Erster nutzbarer Schnitt nach M5/M6/M7 vollständig für den Bestands-Workflow nutzbar:
 isolierte Shell mit allen Overlay-Modi (ephemeral, disk-overlay, isolate-caches,
 isolated-cache-name) sowie Layer-Management (list/clean/clean-cache),
+parallelen benannten Instanzen (`--name`), zentralem structured Logging & Audit-Datei,
 kontrolliertem HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf
 :53 (Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
 Proxy- oder Transparent-Modus (rohes TCP via DNS-Korrelation) sowie

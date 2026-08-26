@@ -35,7 +35,7 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestBuildRunPlan_MissingRepoConfigIsClearError(t *testing.T) {
 	dir := t.TempDir()
-	_, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	_, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err == nil {
 		t.Fatal("missing repo config must fail")
 	}
@@ -48,7 +48,7 @@ func TestBuildRunPlan_Minimal(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestBuildRunPlan_ProxyEnvInjected(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestBuildRunPlan_NoSNIDomainsNoProxyEnv(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\n")
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestBuildRunPlan_ExplicitUserConfigMustExist(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
-	if _, err := buildRunPlan(dir, "", missing, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, ""); err == nil {
+	if _, err := buildRunPlan(dir, "", missing, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", ""); err == nil {
 		t.Error("explicitly requested user config must exist (loud failure beats silent defaults)")
 	}
 }
@@ -126,7 +126,7 @@ func TestBuildRunPlan_ExplicitConfigPathWins(t *testing.T) {
 	writeFile(t, custom, "version: \"1\"\n")
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\ntemplates: [go]\n")
 
-	plan, err := buildRunPlan(dir, custom, "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, custom, "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestBuildRunPlan_OverlayFlags(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayEphemeral, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayEphemeral, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestBuildRunPlan_OverlayFlags(t *testing.T) {
 paths:
   storage_base: $KEG_TEST_STORAGE/layers
 `)
-	plan, err = buildRunPlan(dir, "", userCfg, orchestrator.OverlayDisk, "agent-1", orchestrator.OverlayPlain, "")
+	plan, err = buildRunPlan(dir, "", userCfg, orchestrator.OverlayDisk, "agent-1", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestBuildRunPlan_VarsFromEnvOverride(t *testing.T) {
 
 	// The merged var space is not directly observable via Plan yet
 	// (templates land in WP-M4); assert no error and document intent.
-	if _, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, ""); err != nil {
+	if _, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", ""); err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 }
@@ -233,7 +233,7 @@ func TestBuildRunPlan_DNSEnabledWithEgress(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestBuildRunPlan_DNSHostsInEtcHosts(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), dnsFixtureYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestBuildRunPlan_DNSHostsAndUpstreamCarried(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), dnsFixtureYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestBuildRunPlan_DNSDisabledWithoutNetwork(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\n")
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestBuildRunPlan_DefaultUpstreamIsHostResolver(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -354,7 +354,7 @@ network:
   sni_domains:
     - "*.svc.cluster.local"
 `)
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -378,7 +378,7 @@ network:
     - host: registry-1.docker.io
       ports: [443]
 `)
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -402,7 +402,7 @@ network:
     - host: registry-1.docker.io
       ports: [443]
 `)
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -425,7 +425,7 @@ ports:
   - "5432:15432"
 `)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestBuildRunPlan_NoPortsNoMarker(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -491,7 +491,7 @@ env:
   set:
     GOCACHE: /explicit-wins
 `)
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -521,7 +521,7 @@ delegated_tasks:
       forbidden_args_matching: ["https://*"]
 `)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestBuildRunPlan_NoTasksNoRunnerMarker(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -563,7 +563,7 @@ func TestBuildRunPlan_RunnerWhitelistEnvCompat(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 	t.Setenv("RUNNER_WHITELIST", "container-build, k8s-deploy")
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestBuildRunPlan_RunnerWhitelistAloneEnablesRunner(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), fixtureRepoYAML)
 	t.Setenv("RUNNER_WHITELIST", "deploy")
 
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -600,7 +600,7 @@ version: "1"
 templates:
   - go
 `)
-	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayEphemeral, "")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayEphemeral, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -628,7 +628,7 @@ templates:
 paths:
   storage_base: $KEG_TEST_STORAGE/layers
 `)
-	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayDisk, "test-build")
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayDisk, "test-build", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -661,7 +661,7 @@ paths:
   go_mod_cache: /custom/go/mod
   go_build_cache: /custom/go/build
 `)
-	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "")
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -679,5 +679,53 @@ paths:
 	}
 	if buildMount == nil || buildMount.Src != "/custom/go/build" {
 		t.Errorf("build mount src = %+v, want /custom/go/build", buildMount)
+	}
+}
+
+func TestBuildRunPlan_InstanceName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
+	tmpBase := t.TempDir()
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, "paths:\n  tmp_base: "+tmpBase+"\n")
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "worker-1")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	wantDir := filepath.Join(tmpBase, "keg-worker-1")
+	if plan.TmpDir != wantDir {
+		t.Errorf("TmpDir = %q, want %q", plan.TmpDir, wantDir)
+	}
+	if info, err := os.Stat(plan.TmpDir); err != nil || !info.IsDir() {
+		t.Errorf("instance dir %q not created", plan.TmpDir)
+	}
+}
+
+func TestBuildRunPlan_InvalidInstanceName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
+
+	for _, invalid := range []string{"worker/1", "../escape", "worker 1", "worker@1"} {
+		_, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", invalid)
+		if err == nil || !strings.Contains(err.Error(), "invalid instance name") {
+			t.Errorf("instance name %q should fail validation, got %v", invalid, err)
+		}
+	}
+}
+
+func TestBuildRunPlan_AuditFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `version: "1"`)
+	auditPath := filepath.Join(t.TempDir(), "audit.log")
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, "log:\n  audit_file: "+auditPath+"\n")
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if plan.AuditFile != auditPath {
+		t.Errorf("AuditFile = %q, want %q", plan.AuditFile, auditPath)
 	}
 }
