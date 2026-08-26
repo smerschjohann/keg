@@ -69,8 +69,10 @@ func (m MountMode) Valid() bool {
 
 // EnvSpec is first-class environment control for the sandbox.
 type EnvSpec struct {
-	Unset []string          `yaml:"unset"`
-	Set   map[string]string `yaml:"set"`
+	Unset      []string          `yaml:"unset"`
+	Set        map[string]string `yaml:"set"`
+	Inherit    []string          `yaml:"inherit"`
+	InheritAll bool              `yaml:"inherit_all"`
 }
 
 // Mount is an additional filesystem bind declared by the repo.
@@ -398,10 +400,36 @@ func (r *Repo) validate() error {
 			return fmt.Errorf("repo config: network.dns.hosts[%s]: empty target", name)
 		}
 	}
+	if err := r.Env.validate("repo config"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *EnvSpec) validate(prefix string) error {
+	for i, name := range e.Inherit {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s: env.inherit[%d]: empty name", prefix, i)
+		}
+		if strings.Contains(name, "=") {
+			return fmt.Errorf("%s: env.inherit[%d] %q: variable name must not contain '='", prefix, i, name)
+		}
+	}
+	for i, name := range e.Unset {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s: env.unset[%d]: empty name", prefix, i)
+		}
+		if strings.Contains(name, "=") {
+			return fmt.Errorf("%s: env.unset[%d] %q: variable name must not contain '='", prefix, i, name)
+		}
+	}
 	return nil
 }
 
 func (u *User) validate() error {
+	if err := u.Env.validate("user config"); err != nil {
+		return err
+	}
 	for name, hostPath := range u.Secrets {
 		if name == "" {
 			return fmt.Errorf("user config: secrets: entry with empty name")
@@ -424,6 +452,9 @@ func (u *User) validate() error {
 		}
 	}
 	for repoPat, override := range u.Repos {
+		if err := override.Env.validate(fmt.Sprintf("user config: repos[%s]", repoPat)); err != nil {
+			return err
+		}
 		for _, ref := range override.Secrets {
 			if ref.Name == "" {
 				return fmt.Errorf("user config: repos[%s].secrets: entry with empty name", repoPat)

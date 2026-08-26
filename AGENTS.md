@@ -82,6 +82,12 @@ Stdlib zuerst. Das Budget steht in `IMPLEMENTATION_PLAN.md` §1 und ist
   und Close-Pfad; Server-Tests nutzen den goroutine-leak-check.
 * **Secrets:** Werte niemals loggen, niemals in Fehlernachrichten, niemals
   in Testausgaben. Audit sagt nur `(changed|unchanged|error)`.
+* **Status-Abfragen & Hintergrund-Tasks:** Statusabfragen (Polling, Warten
+  auf Hintergrund-Tasks, Prozesse oder Goroutinen) dürfen **niemals ohne
+  Timeout** im geeigneten zeitlichen Rahmen durchgeführt werden. Unbegrenztes
+  oder ungedrosseltes Warten ohne Timeout- und Abbruchkriterium
+  (`context.WithTimeout`, `select` mit `time.After` / `time.Ticker`, reaktive
+  Benachrichtigungen statt Polling-Schleifen) ist strikt unzulässig.
 * **Kommentare:** Paket-Kommentar für jedes Paket; exported Symbole
   dokumentiert (revive prüft das). Kommentare erklären *warum*, nicht *was*.
 

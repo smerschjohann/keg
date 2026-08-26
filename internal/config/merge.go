@@ -46,11 +46,29 @@ func mergeNetwork(base, over Network) Network {
 	return out
 }
 
-func mergeEnv(base, over EnvSpec) EnvSpec {
+// MergeEnv merges over onto base: Set is keywise merged (over wins), Unset
+// and Inherit are unioned, and InheritAll is true if either is true.
+func MergeEnv(base, over EnvSpec) EnvSpec {
 	out := base
 	out.Set = mergeStringMaps(base.Set, over.Set)
 	out.Unset = union(base.Unset, over.Unset)
+	out.Inherit = union(base.Inherit, over.Inherit)
+	out.InheritAll = base.InheritAll || over.InheritAll
 	return out
+}
+
+// MergeEnvChain merges a chain of EnvSpecs in order from lowest to highest
+// precedence: userGlobal → repo → repoOverride → cli.
+func MergeEnvChain(specs ...EnvSpec) EnvSpec {
+	var out EnvSpec
+	for _, s := range specs {
+		out = MergeEnv(out, s)
+	}
+	return out
+}
+
+func mergeEnv(base, over EnvSpec) EnvSpec {
+	return MergeEnv(base, over)
 }
 
 func mergePaths(base Paths, over *Paths) Paths {
@@ -101,10 +119,8 @@ func union(base, add []string) []string {
 	return UnionStrings(base, add)
 }
 
-// MatchRepo returns the effective user config for repoPath: global scope
-// with the matching repos[] override merged in. Exact realpath matches win;
-// otherwise the glob with the longest literal prefix applies.
-func MatchRepo(user *User, repoPath string) *User {
+// FindRepoOverride returns the matching RepoOverride for repoPath from user.Repos if any.
+func FindRepoOverride(user *User, repoPath string) (RepoOverride, bool) {
 	repoPath = path.Clean(repoPath)
 
 	type candidate struct {
@@ -113,9 +129,6 @@ func MatchRepo(user *User, repoPath string) *User {
 		specific int
 	}
 
-	// Expand all patterns up front so "~"/"$VAR"-only keys work as exact
-	// matches too. Unexpandable entries are skipped silently here; loading
-	// reports them separately if needed.
 	var exactKey string
 	best := candidate{specific: -1}
 	for key := range user.Repos {
@@ -139,13 +152,22 @@ func MatchRepo(user *User, repoPath string) *User {
 	if chosen == "" {
 		chosen = best.key
 	}
+	if chosen == "" {
+		return RepoOverride{}, false
+	}
+	return user.Repos[chosen], true
+}
 
+// MatchRepo returns the effective user config for repoPath: global scope
+// with the matching repos[] override merged in. Exact realpath matches win;
+// otherwise the glob with the longest literal prefix applies.
+func MatchRepo(user *User, repoPath string) *User {
 	out := &User{}
 	*out = *user
-	if chosen == "" {
+	override, ok := FindRepoOverride(user, repoPath)
+	if !ok {
 		return out
 	}
-	override := user.Repos[chosen]
 	return MergeUsers(out, &User{
 		Paths:       derefPaths(override.Paths),
 		Runner:      derefRunner(override.Runner),

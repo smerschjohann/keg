@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/trust"
 )
 
 func basePlan() Plan {
@@ -145,6 +146,7 @@ func TestBuildArgs_BaseLayout(t *testing.T) {
 		"--setenv", "TMPDIR", "/tmp",
 		"--setenv", "SHELL", "/bin/bash",
 		"--setenv", "PATH", "/work/repo/.cache/bin:/home/sandbox/.local/bin:/usr/local/bin:/usr/bin:/bin",
+		"--setenv", "KEG_ENV_KEEP", `{"core":["HOME","TMPDIR","SHELL","PATH","CODE_KEG"]}`,
 		"--", "/bin/bash",
 	)
 	got := strings.Join(args, "\n")
@@ -557,12 +559,21 @@ func TestBuildArgs_DelegationChannel(t *testing.T) {
 	}
 }
 
+func approveRepo(t *testing.T, repoDir string, content []byte) {
+	t.Helper()
+	storePath := trust.DefaultTrustPath()
+	store, _ := trust.LoadFile(storePath)
+	_, _ = trust.Approve(store, repoDir, content)
+	_ = trust.SaveFile(storePath, store)
+}
+
 func TestBuildPlan_UserConfigAdditiveMountsAndNetwork(t *testing.T) {
 	repoDir := t.TempDir()
 	repoYAML := "version: \"1\"\n"
 	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte(repoYAML), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	approveRepo(t, repoDir, []byte(repoYAML))
 
 	userYAML := `
 mounts:
@@ -696,6 +707,7 @@ func TestBuildPlan_AlwaysSecretInjectedWithoutRepoNeed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte("version: \"1\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	approveRepo(t, repoDir, []byte("version: \"1\"\n"))
 	script := filepath.Join(t.TempDir(), "genkey")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho -n always-token\n"), 0o750); err != nil {
 		t.Fatal(err)
@@ -734,6 +746,7 @@ func TestBuildPlan_RepoOverrideSecretNeed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte("version: \"1\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	approveRepo(t, repoDir, []byte("version: \"1\"\n"))
 	script := filepath.Join(t.TempDir(), "gen-db")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho -n db-pass\n"), 0o750); err != nil {
 		t.Fatal(err)
@@ -763,5 +776,261 @@ repos:
 	}
 	if plan.EnvSet["DB_PASSWORD_FILE"] != "/run/secrets/db_password" {
 		t.Errorf("plan.EnvSet[DB_PASSWORD_FILE] = %q, want /run/secrets/db_password", plan.EnvSet["DB_PASSWORD_FILE"])
+	}
+}
+
+func TestBuildPlan_TrustGate(t *testing.T) {
+	repoDir := t.TempDir()
+	trustDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", trustDir)
+
+	cfgContent := []byte("version: \"1\"\nenv:\n  set:\n    TEST_KEY: \"val\"\n")
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), cfgContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Untrusted repo config in non-TTY -> BuildPlan fails with trust error
+	_, _, err := BuildPlan(repoDir, "", "", OverlayPlain, "", OverlayPlain, "", "test-trust-untrusted")
+	if err == nil {
+		t.Fatal("BuildPlan with untrusted repo config should fail, got nil error")
+	}
+	if !strings.Contains(err.Error(), "keg trust") {
+		t.Errorf("expected error to mention 'keg trust', got: %v", err)
+	}
+
+	// 2. Trust the repo config
+	trustStorePath := filepath.Join(trustDir, "keg", "trust.yaml")
+	store, _ := trust.LoadFile(trustStorePath)
+	_, err = trust.Approve(store, repoDir, cfgContent)
+	if err != nil {
+		t.Fatalf("Approve failed: %v", err)
+	}
+	if err := trust.SaveFile(trustStorePath, store); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	// 3. Now BuildPlan succeeds
+	plan, _, err := BuildPlan(repoDir, "", "", OverlayPlain, "", OverlayPlain, "", "test-trust-trusted")
+	if err != nil {
+		t.Fatalf("BuildPlan after trust approval failed: %v", err)
+	}
+	if plan.EnvSet["TEST_KEY"] != "val" {
+		t.Errorf("plan.EnvSet[TEST_KEY] = %q, want val", plan.EnvSet["TEST_KEY"])
+	}
+}
+
+func TestBuildArgs_EnvKeepMarker_ListMode(t *testing.T) {
+	p := basePlan()
+	p.EnvInherit = []string{"LANG", "TERM"}
+	p.EnvSet = map[string]string{"CUSTOM": "1"}
+
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+
+	// Verify KEG_ENV_KEEP is set in bwrap args
+	var markerVal string
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--setenv" && args[i+1] == EnvKeepMarkerName {
+			markerVal = args[i+2]
+			break
+		}
+	}
+	if markerVal == "" {
+		t.Fatalf("missing %s marker in args: %v", EnvKeepMarkerName, args)
+	}
+	if !strings.Contains(markerVal, `"inherit":["LANG","TERM"]`) {
+		t.Errorf("markerVal missing inherit vars: %s", markerVal)
+	}
+	if !strings.Contains(markerVal, `"CUSTOM":"1"`) {
+		t.Errorf("markerVal missing custom set var: %s", markerVal)
+	}
+}
+
+func TestBuildArgs_EnvKeepMarker_AllMode(t *testing.T) {
+	p := basePlan()
+	p.EnvInheritAll = true
+
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+
+	var markerVal string
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--setenv" && args[i+1] == EnvKeepMarkerName {
+			markerVal = args[i+2]
+			break
+		}
+	}
+	if markerVal == "" {
+		t.Fatalf("missing %s marker in args: %v", EnvKeepMarkerName, args)
+	}
+	if !strings.Contains(markerVal, `"all":true`) {
+		t.Errorf("markerVal expected all:true, got: %s", markerVal)
+	}
+}
+
+func TestInvariant_EnvPassthroughDeniedNameRejected(t *testing.T) {
+	tests := []struct {
+		name       string
+		deniedName string
+	}{
+		{"HTTP_PROXY", "HTTP_PROXY"},
+		{"AWS_SESSION_TOKEN", "AWS_SESSION_TOKEN"},
+		{"OPENAI_API_KEY", "OPENAI_API_KEY"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			cfgYAML := `
+version: "1"
+env:
+  inherit:
+    - ` + tt.deniedName + `
+`
+			if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte(cfgYAML), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			approveRepo(t, repoDir, []byte(cfgYAML))
+
+			_, _, err := BuildPlan(repoDir, "", "", OverlayPlain, "", OverlayPlain, "", "test-denied-passthrough")
+			if err == nil {
+				t.Fatalf("expected BuildPlan to reject passthrough of %s, got nil error", tt.deniedName)
+			}
+			if !strings.Contains(err.Error(), tt.deniedName) {
+				t.Errorf("error %q should mention denied name %s", err.Error(), tt.deniedName)
+			}
+			if !strings.Contains(err.Error(), "-e") && !strings.Contains(err.Error(), "env.set") {
+				t.Errorf("error %q should mention explicit setting (-e or env.set)", err.Error())
+			}
+		})
+	}
+}
+
+func TestBuildPlan_EnvMergeOrder(t *testing.T) {
+	repoDir := t.TempDir()
+	cfgYAML := `
+version: "1"
+env:
+  set:
+    VAR_CONFLICT: "repo"
+    REPO_ONLY: "repo"
+  inherit:
+    - REPO_INHERIT
+`
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte(cfgYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	approveRepo(t, repoDir, []byte(cfgYAML))
+
+	userYAML := `
+env:
+  set:
+    VAR_CONFLICT: "global"
+    GLOBAL_ONLY: "global"
+  inherit:
+    - GLOBAL_INHERIT
+repos:
+  "` + repoDir + `":
+    env:
+      set:
+        VAR_CONFLICT: "override"
+      inherit:
+        - OVERRIDE_INHERIT
+`
+	userFile := filepath.Join(t.TempDir(), "user-config.yaml")
+	if err := os.WriteFile(userFile, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, _, err := BuildPlan(repoDir, "", userFile, OverlayPlain, "", OverlayPlain, "", "test-merge-order")
+	if err != nil {
+		t.Fatalf("BuildPlan failed: %v", err)
+	}
+
+	// Order: User-global < Repo < repos[] override
+	// VAR_CONFLICT: global -> repo -> override => "override"
+	if plan.EnvSet["VAR_CONFLICT"] != "override" {
+		t.Errorf("plan.EnvSet[VAR_CONFLICT] = %q, want override", plan.EnvSet["VAR_CONFLICT"])
+	}
+	if plan.EnvSet["GLOBAL_ONLY"] != "global" {
+		t.Errorf("plan.EnvSet[GLOBAL_ONLY] = %q, want global", plan.EnvSet["GLOBAL_ONLY"])
+	}
+	if plan.EnvSet["REPO_ONLY"] != "repo" {
+		t.Errorf("plan.EnvSet[REPO_ONLY] = %q, want repo", plan.EnvSet["REPO_ONLY"])
+	}
+
+	// Inherit should contain union of all three
+	wantInherit := []string{"GLOBAL_INHERIT", "REPO_INHERIT", "OVERRIDE_INHERIT"}
+	for _, w := range wantInherit {
+		if !slices.Contains(plan.EnvInherit, w) {
+			t.Errorf("plan.EnvInherit = %v, missing %s", plan.EnvInherit, w)
+		}
+	}
+}
+
+func TestInvariant_EnvUnsetBeatsInherit(t *testing.T) {
+	repoDir := t.TempDir()
+	cfgYAML := `
+version: "1"
+env:
+  inherit:
+    - CONFLICT_VAR
+    - KEEP_VAR
+  unset:
+    - CONFLICT_VAR
+`
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte(cfgYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	approveRepo(t, repoDir, []byte(cfgYAML))
+
+	plan, _, err := BuildPlan(repoDir, "", "", OverlayPlain, "", OverlayPlain, "", "test-unset-beats-inherit")
+	if err != nil {
+		t.Fatalf("BuildPlan failed: %v", err)
+	}
+
+	if slices.Contains(plan.EnvInherit, "CONFLICT_VAR") {
+		t.Errorf("plan.EnvInherit should NOT contain CONFLICT_VAR because it is unset: %v", plan.EnvInherit)
+	}
+	if !slices.Contains(plan.EnvInherit, "KEEP_VAR") {
+		t.Errorf("plan.EnvInherit should contain KEEP_VAR: %v", plan.EnvInherit)
+	}
+
+	// Test in guest execution
+	env := BuildKeepEnv([]byte(`{
+		"inherit": ["CONFLICT_VAR", "KEEP_VAR"],
+		"unset": ["CONFLICT_VAR"]
+	}`), []string{"CONFLICT_VAR=leak", "KEEP_VAR=ok"})
+
+	envMap := make(map[string]string)
+	for _, e := range env {
+		k, v, _ := strings.Cut(e, "=")
+		envMap[k] = v
+	}
+	if _, ok := envMap["CONFLICT_VAR"]; ok {
+		t.Errorf("CONFLICT_VAR should be unset in workload environment, got %q", envMap["CONFLICT_VAR"])
+	}
+	if envMap["KEEP_VAR"] != "ok" {
+		t.Errorf("KEEP_VAR = %q, want 'ok'", envMap["KEEP_VAR"])
+	}
+}
+
+func TestInvariant_SetBeatsInheritedValue(t *testing.T) {
+	env := BuildKeepEnv([]byte(`{
+		"inherit": ["MY_VAR"],
+		"set": {"MY_VAR": "explicit_value"}
+	}`), []string{"MY_VAR=host_value"})
+
+	envMap := make(map[string]string)
+	for _, e := range env {
+		k, v, _ := strings.Cut(e, "=")
+		envMap[k] = v
+	}
+	if envMap["MY_VAR"] != "explicit_value" {
+		t.Errorf("MY_VAR = %q, want 'explicit_value' (set beats inherit)", envMap["MY_VAR"])
 	}
 }

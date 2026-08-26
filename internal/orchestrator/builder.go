@@ -20,7 +20,12 @@ import (
 	"github.com/smerschjohann/keg/internal/runner"
 	"github.com/smerschjohann/keg/internal/secrets"
 	"github.com/smerschjohann/keg/internal/template"
+	"github.com/smerschjohann/keg/internal/trust"
 )
+
+var ensureTrustGate = func(repoRoot, cfgPath string) (bool, error) {
+	return trust.EnsureTrustFile(context.Background(), trust.DefaultTrustPath(), repoRoot, cfgPath, os.Stdin, os.Stdout, trust.IsTerminal)
+}
 
 // IsValidInstanceName validates that an instance name consists only of
 // alphanumeric characters, hyphens, and underscores.
@@ -52,6 +57,11 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	if cfgPath == "" {
 		cfgPath = filepath.Join(root, ".keg.yaml")
 	}
+
+	if _, err := ensureTrustGate(root, cfgPath); err != nil {
+		return Plan{}, nil, err
+	}
+
 	repo, err := config.LoadRepo(cfgPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && repoCfgPath == "" {
@@ -110,13 +120,36 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	sniDomains := config.UnionStrings(repo.Network.SNIDomains, effective.Network.SNIDomains)
 	tcpEndpoints := append(slices.Clone(repo.Network.TCPEndpoints), effective.Network.TCPEndpoints...)
 
+	// Env merge chain: User-global -> Repo -> repos[match] override -> CLI
+	var overrideEnv config.EnvSpec
+	if override, ok := config.FindRepoOverride(user, root); ok {
+		overrideEnv = override.Env
+	}
+	mergedEnv := config.MergeEnvChain(user.Env, repo.Env, overrideEnv)
+
+	// Validate: HostDeniedEnvVars must never be passed through from host env
+	for _, name := range mergedEnv.Inherit {
+		if slices.Contains(HostDeniedEnvVars, name) {
+			return Plan{}, nil, fmt.Errorf("cannot pass through denied host environment variable %q — use explicit setting (-e %s=<value> or env.set) instead", name, name)
+		}
+	}
+
+	// Conflict resolution: unset beats inherit
+	if len(mergedEnv.Unset) > 0 {
+		mergedEnv.Inherit = slices.DeleteFunc(mergedEnv.Inherit, func(s string) bool {
+			return slices.Contains(mergedEnv.Unset, s)
+		})
+	}
+
 	plan := Plan{
-		RepoRoot:    root,
-		SandboxHome: "/home/sandbox",
-		Mounts:      expandedMounts,
-		EnvUnset:    config.UnionStrings(repo.Env.Unset, effective.Env.Unset),
-		EnvSet:      map[string]string{},
-		BwrapArgs:   repo.BwrapArgs,
+		RepoRoot:      root,
+		SandboxHome:   "/home/sandbox",
+		Mounts:        expandedMounts,
+		EnvUnset:      mergedEnv.Unset,
+		EnvSet:        map[string]string{},
+		EnvInherit:    mergedEnv.Inherit,
+		EnvInheritAll: mergedEnv.InheritAll,
+		BwrapArgs:     repo.BwrapArgs,
 		AllowWeakBwrap: effective.Security.AllowWeakBwrap != nil &&
 			*effective.Security.AllowWeakBwrap,
 		Overlay:      overlay,
@@ -131,10 +164,7 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		plan.Landlock = "auto"
 	}
 	plan.EnvSet[EnvLandlock] = plan.Landlock
-	for k, v := range repo.Env.Set {
-		plan.EnvSet[k] = v
-	}
-	for k, v := range effective.Env.Set {
+	for k, v := range mergedEnv.Set {
 		plan.EnvSet[k] = v
 	}
 

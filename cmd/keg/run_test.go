@@ -13,6 +13,7 @@ import (
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/trust"
 )
 
 const fixtureRepoYAML = `
@@ -31,6 +32,12 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Base(path) == ".keg.yaml" || strings.HasSuffix(path, ".yaml") {
+		storePath := trust.DefaultTrustPath()
+		store, _ := trust.LoadFile(storePath)
+		_, _ = trust.Approve(store, filepath.Dir(path), []byte(content))
+		_ = trust.SaveFile(storePath, store)
 	}
 }
 
@@ -140,6 +147,11 @@ func TestBuildRunPlan_ExplicitConfigPathWins(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "other.yaml")
 	writeFile(t, custom, "version: \"1\"\n")
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), "version: \"1\"\ntemplates: [go]\n")
+
+	storePath := trust.DefaultTrustPath()
+	store, _ := trust.LoadFile(storePath)
+	_, _ = trust.Approve(store, dir, []byte("version: \"1\"\n"))
+	_ = trust.SaveFile(storePath, store)
 
 	plan, err := buildRunPlan(dir, custom, "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err != nil {
@@ -924,5 +936,113 @@ secrets:
 	}
 	if !strings.Contains(err.Error(), "secret_sources") || !strings.Contains(err.Error(), "secrets") {
 		t.Errorf("error must name both lookup places: %v", err)
+	}
+}
+
+func TestParseEnvFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		entries     []string
+		wantSet     map[string]string
+		wantInherit []string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "plain names inherit",
+			entries:     []string{"FOO", "BAR"},
+			wantSet:     map[string]string{},
+			wantInherit: []string{"FOO", "BAR"},
+		},
+		{
+			name:        "key value pairs set",
+			entries:     []string{"FOO=1", "BAR=2=3"},
+			wantSet:     map[string]string{"FOO": "1", "BAR": "2=3"},
+			wantInherit: nil,
+		},
+		{
+			name:        "mixed inherit and set",
+			entries:     []string{"FOO", "BAR=val"},
+			wantSet:     map[string]string{"BAR": "val"},
+			wantInherit: []string{"FOO"},
+		},
+		{
+			name:        "duplicate set last wins",
+			entries:     []string{"FOO=1", "FOO=2"},
+			wantSet:     map[string]string{"FOO": "2"},
+			wantInherit: nil,
+		},
+		{
+			name:        "set overrides prior inherit of same name",
+			entries:     []string{"FOO", "FOO=val"},
+			wantSet:     map[string]string{"FOO": "val"},
+			wantInherit: nil,
+		},
+		{
+			name:        "inherit overrides prior set of same name",
+			entries:     []string{"FOO=val", "FOO"},
+			wantSet:     map[string]string{},
+			wantInherit: []string{"FOO"},
+		},
+		{
+			name:        "empty entry rejected",
+			entries:     []string{""},
+			wantErr:     true,
+			errContains: "empty",
+		},
+		{
+			name:        "entry starting with equals rejected",
+			entries:     []string{"=val"},
+			wantErr:     true,
+			errContains: "empty name",
+		},
+		{
+			name:        "denied passthrough via -e resolves from host env",
+			entries:     []string{"HTTP_PROXY"},
+			wantSet:     map[string]string{"HTTP_PROXY": "http://corp:3128"},
+			wantInherit: nil,
+		},
+		{
+			name:        "denied explicit set allowed",
+			entries:     []string{"HTTP_PROXY=http://127.0.0.1:8080"},
+			wantSet:     map[string]string{"HTTP_PROXY": "http://127.0.0.1:8080"},
+			wantInherit: nil,
+		},
+	}
+
+	t.Setenv("HTTP_PROXY", "http://corp:3128")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set, inherit, err := parseEnvFlag(tt.entries)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseEnvFlag(%v) expected error, got nil", tt.entries)
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseEnvFlag(%v) unexpected error: %v", tt.entries, err)
+			}
+			if len(set) != len(tt.wantSet) {
+				t.Fatalf("set = %v, want %v", set, tt.wantSet)
+			}
+			for k, v := range tt.wantSet {
+				if set[k] != v {
+					t.Errorf("set[%s] = %q, want %q", k, set[k], v)
+				}
+			}
+			if len(inherit) != len(tt.wantInherit) {
+				t.Fatalf("inherit = %v, want %v", inherit, tt.wantInherit)
+			}
+			for i, v := range tt.wantInherit {
+				if inherit[i] != v {
+					t.Errorf("inherit[%d] = %q, want %q", i, inherit[i], v)
+				}
+			}
+		})
 	}
 }

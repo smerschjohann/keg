@@ -283,3 +283,118 @@ repos:
 		t.Errorf("InjectNeeds[1].Env = %q, want DB_PASSWORD_FILE", got.InjectNeeds[1].Env)
 	}
 }
+
+func TestMergeEnv_InheritSemantics(t *testing.T) {
+	tests := []struct {
+		name string
+		base EnvSpec
+		over EnvSpec
+		want EnvSpec
+	}{
+		{
+			name: "union of inherit and map merge of set",
+			base: EnvSpec{
+				Set:        map[string]string{"A": "1", "B": "2"},
+				Unset:      []string{"U1"},
+				Inherit:    []string{"LANG", "LC_ALL"},
+				InheritAll: false,
+			},
+			over: EnvSpec{
+				Set:        map[string]string{"B": "over", "C": "3"},
+				Unset:      []string{"U1", "U2"},
+				Inherit:    []string{"TERM", "LANG"},
+				InheritAll: true,
+			},
+			want: EnvSpec{
+				Set:        map[string]string{"A": "1", "B": "over", "C": "3"},
+				Unset:      []string{"U1", "U2"},
+				Inherit:    []string{"LANG", "LC_ALL", "TERM"},
+				InheritAll: true,
+			},
+		},
+		{
+			name: "inherit_all true in base preserved when false in over",
+			base: EnvSpec{
+				InheritAll: true,
+			},
+			over: EnvSpec{
+				InheritAll: false,
+			},
+			want: EnvSpec{
+				Set:        map[string]string{},
+				Unset:      nil,
+				Inherit:    nil,
+				InheritAll: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeEnv(tt.base, tt.over)
+			if got.InheritAll != tt.want.InheritAll {
+				t.Errorf("InheritAll = %v, want %v", got.InheritAll, tt.want.InheritAll)
+			}
+			if len(got.Inherit) != len(tt.want.Inherit) {
+				t.Fatalf("Inherit = %v, want %v", got.Inherit, tt.want.Inherit)
+			}
+			for i, v := range tt.want.Inherit {
+				if got.Inherit[i] != v {
+					t.Errorf("Inherit[%d] = %q, want %q", i, got.Inherit[i], v)
+				}
+			}
+			for k, v := range tt.want.Set {
+				if got.Set[k] != v {
+					t.Errorf("Set[%s] = %q, want %q", k, got.Set[k], v)
+				}
+			}
+			for i, v := range tt.want.Unset {
+				if got.Unset[i] != v {
+					t.Errorf("Unset[%d] = %q, want %q", i, got.Unset[i], v)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeEnv_RepoBeatsGlobalSet(t *testing.T) {
+	global := EnvSpec{
+		Set:     map[string]string{"VAR": "global", "GLOBAL": "1"},
+		Inherit: []string{"BASE_INHERIT"},
+	}
+	repo := EnvSpec{
+		Set:     map[string]string{"VAR": "repo", "REPO": "1"},
+		Inherit: []string{"REPO_INHERIT"},
+	}
+	got := MergeEnvChain(global, repo, EnvSpec{}, EnvSpec{})
+	if got.Set["VAR"] != "repo" {
+		t.Errorf("got.Set[VAR] = %q, want repo", got.Set["VAR"])
+	}
+	if got.Set["GLOBAL"] != "1" || got.Set["REPO"] != "1" {
+		t.Errorf("got.Set = %v, want both keys", got.Set)
+	}
+	if len(got.Inherit) != 2 || got.Inherit[0] != "BASE_INHERIT" || got.Inherit[1] != "REPO_INHERIT" {
+		t.Errorf("got.Inherit = %v, want [BASE_INHERIT REPO_INHERIT]", got.Inherit)
+	}
+}
+
+func TestMergeEnv_ReposOverrideBeatsRepo(t *testing.T) {
+	global := EnvSpec{Set: map[string]string{"VAR": "global"}}
+	repo := EnvSpec{Set: map[string]string{"VAR": "repo"}}
+	override := EnvSpec{Set: map[string]string{"VAR": "override"}}
+	got := MergeEnvChain(global, repo, override, EnvSpec{})
+	if got.Set["VAR"] != "override" {
+		t.Errorf("got.Set[VAR] = %q, want override", got.Set["VAR"])
+	}
+}
+
+func TestMergeEnv_CliBeatsAll(t *testing.T) {
+	global := EnvSpec{Set: map[string]string{"VAR": "global"}}
+	repo := EnvSpec{Set: map[string]string{"VAR": "repo"}}
+	override := EnvSpec{Set: map[string]string{"VAR": "override"}}
+	cli := EnvSpec{Set: map[string]string{"VAR": "cli"}}
+	got := MergeEnvChain(global, repo, override, cli)
+	if got.Set["VAR"] != "cli" {
+		t.Errorf("got.Set[VAR] = %q, want cli", got.Set["VAR"])
+	}
+}

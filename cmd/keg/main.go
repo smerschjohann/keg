@@ -68,12 +68,22 @@ func NewCommand() *cli.Command {
 						Aliases: []string{"n"},
 						Usage:   "instance name for deterministic instance directories (enables parallel sandboxes)",
 					},
+					&cli.StringSliceFlag{
+						Name:    "env",
+						Aliases: []string{"e"},
+						Usage:   "pass through (-e VAR) or set (-e VAR=value) environment variable in sandbox (repeatable)",
+					},
+					&cli.BoolFlag{
+						Name:  "inherit-all",
+						Usage: "pass through all host environment variables (except denied credentials/proxies)",
+					},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					return runAction(ctx, c)
 				},
 			},
 			delegateCommand(),
+			trustCommand(),
 			listCommand(),
 			cleanCommand(),
 			cleanCacheCommand(),

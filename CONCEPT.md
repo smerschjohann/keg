@@ -723,20 +723,32 @@ vars:
 templates:
   - go
 
-# First-class Environment-Steuerung für die Sandbox.
+# First-class Environment-Steuerung für die Sandbox (Deny-by-default).
 # Werte sind template-bar ({{ .Vars… }}, {{ .Env… }}).
-# Reihenfolge: bwrap --unsetenv der Basis-Isolation → Template-Env →
-# hier: erst unset, dann set (set gewinnt).
+# Reihenfolge: Basis-Isolation (nur Core-Vars HOME, TMPDIR, SHELL, PATH, CODE_KEG)
+# -> Template-Env -> User-Global -> Repo -> repos[match] override -> CLI.
+# Konflikte: unset gewinnt über inherit; set gewinnt über geerbte Werte.
 env:
-  unset:                       # Host-Leaks aktiv entfernen
-    - AWS_SESSION_TOKEN
-    - OPENAI_API_KEY
+  inherit:                     # Explizite Host-Variablen durchreichen
+    - LANG
+    - COLORTERM
+  inherit_all: false           # true = alle Host-Vars durchreichen (außer Denied-Credentials)
+  unset:                       # Zusätzliche Variablen aktiv entfernen
+    - UNWANTED_VAR
   set:
     LOG_FORMAT: json
     # Secrets kommen als fertige Vars aus der User-Config (§4.8,
     # vars_from_exec) — hier steht KEIN Secret-Manager-Aufruf:
     AI_TOKEN: '{{ .Vars.ai_token | default "" }}'
     MOCK_URL: 'http://mock.localhost.test:{{ .Vars.mock_port }}'
+
+# Repository-Trust-Gate:
+# Um zu verhindern, dass bösartige oder manipulierte Repositories ungefragt
+# Host-Variablen anfordern oder die Sandbox-Konfiguration manipulieren, prüft
+# keg — Kernel-isolated Execution with Gateways jede nicht-leere .keg.yaml gegen den lokalen Trust-Store
+# (~/.config/keg/trust.yaml). Neue oder geänderte Konfigurationen
+# erfordern eine Freigabe (interaktiv via TTY-Prompt mit Diff oder via
+# `keg trust`).
 
 # Rohe Zusatz-Argumente für den generierten bwrap-Aufruf (Stringliste,
 # template-bar). Werden NACH allen abgeleiteten Argumenten angehängt und

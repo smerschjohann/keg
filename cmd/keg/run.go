@@ -8,8 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 
+	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
 )
 
@@ -18,6 +21,39 @@ import (
 func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator.Overlay, diskName string, cacheOverlay orchestrator.Overlay, isolatedCacheName, instanceName string) (orchestrator.Plan, error) {
 	plan, _, err := orchestrator.BuildPlan(repoDir, repoCfgPath, userCfgPath, overlay, diskName, cacheOverlay, isolatedCacheName, instanceName)
 	return plan, err
+}
+
+func parseEnvFlag(entries []string) (map[string]string, []string, error) {
+	set := make(map[string]string)
+	var inherit []string
+
+	for _, entry := range entries {
+		if entry == "" {
+			return nil, nil, fmt.Errorf("empty environment flag entry")
+		}
+		if strings.HasPrefix(entry, "=") {
+			return nil, nil, fmt.Errorf("invalid environment flag entry %q: empty name", entry)
+		}
+		if k, v, found := strings.Cut(entry, "="); found {
+			set[k] = v
+			inherit = slices.DeleteFunc(inherit, func(s string) bool { return s == k })
+		} else {
+			if slices.Contains(orchestrator.HostDeniedEnvVars, entry) {
+				// Explicit CLI request to forward a denied host variable:
+				// resolve its value from the host environment into set.
+				if val, ok := os.LookupEnv(entry); ok {
+					set[entry] = val
+				}
+				inherit = slices.DeleteFunc(inherit, func(s string) bool { return s == entry })
+			} else {
+				delete(set, entry)
+				if !slices.Contains(inherit, entry) {
+					inherit = append(inherit, entry)
+				}
+			}
+		}
+	}
+	return set, inherit, nil
 }
 
 var (
@@ -72,6 +108,19 @@ func runAction(ctx context.Context, c *cliCommand) error {
 	if err != nil {
 		return err
 	}
+
+	cliSet, cliInherit, err := parseEnvFlag(c.StringSlice("env"))
+	if err != nil {
+		return err
+	}
+	for k, v := range cliSet {
+		plan.EnvSet[k] = v
+	}
+	plan.EnvInherit = config.UnionStrings(plan.EnvInherit, cliInherit)
+	if c.Bool("inherit-all") {
+		plan.EnvInheritAll = true
+	}
+
 	plan.Command = c.Args().Slice()
 	if len(plan.Command) == 0 {
 		plan.Command = []string{"/bin/bash", "-i"}

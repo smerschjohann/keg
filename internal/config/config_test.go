@@ -381,3 +381,106 @@ func TestValidateUser_EmptySecretPathRejected(t *testing.T) {
 		t.Errorf("error %q must mention secrets", err)
 	}
 }
+
+func TestParseRepo_EnvInherit(t *testing.T) {
+	repo, err := ParseRepo([]byte(`
+version: "1"
+env:
+  inherit:
+    - LANG
+    - TERM
+  inherit_all: true
+`))
+	if err != nil {
+		t.Fatalf("parse repo with env.inherit failed: %v", err)
+	}
+	if len(repo.Env.Inherit) != 2 || repo.Env.Inherit[0] != "LANG" || repo.Env.Inherit[1] != "TERM" {
+		t.Errorf("repo.Env.Inherit = %v, want [LANG TERM]", repo.Env.Inherit)
+	}
+	if !repo.Env.InheritAll {
+		t.Errorf("repo.Env.InheritAll = false, want true")
+	}
+}
+
+func TestParseUser_EnvInherit(t *testing.T) {
+	user, err := ParseUser([]byte(`
+env:
+  inherit:
+    - COLORTERM
+  inherit_all: true
+repos:
+  "/some/path":
+    env:
+      inherit:
+        - LC_ALL
+`))
+	if err != nil {
+		t.Fatalf("parse user with env.inherit failed: %v", err)
+	}
+	if len(user.Env.Inherit) != 1 || user.Env.Inherit[0] != "COLORTERM" {
+		t.Errorf("user.Env.Inherit = %v, want [COLORTERM]", user.Env.Inherit)
+	}
+	if !user.Env.InheritAll {
+		t.Errorf("user.Env.InheritAll = false, want true")
+	}
+	override := user.Repos["/some/path"]
+	if len(override.Env.Inherit) != 1 || override.Env.Inherit[0] != "LC_ALL" {
+		t.Errorf("override.Env.Inherit = %v, want [LC_ALL]", override.Env.Inherit)
+	}
+}
+
+func TestParseEnv_InheritRejectsEquals(t *testing.T) {
+	tests := []struct {
+		name     string
+		isUser   bool
+		yamlText string
+		wantErr  string
+	}{
+		{
+			name: "repo inherit contains equals",
+			yamlText: `
+version: "1"
+env:
+  inherit:
+    - FOO=bar
+`,
+			wantErr: "FOO=bar",
+		},
+		{
+			name: "repo inherit contains empty string",
+			yamlText: `
+version: "1"
+env:
+  inherit:
+    - ""
+`,
+			wantErr: "empty",
+		},
+		{
+			name:   "user inherit contains equals",
+			isUser: true,
+			yamlText: `
+env:
+  inherit:
+    - BAZ=123
+`,
+			wantErr: "BAZ=123",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+			if tt.isUser {
+				_, err = ParseUser([]byte(tt.yamlText))
+			} else {
+				_, err = ParseRepo([]byte(tt.yamlText))
+			}
+			if err == nil {
+				t.Fatalf("expected error for %s, got nil", tt.name)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}

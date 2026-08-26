@@ -56,6 +56,8 @@ type EgressProxyConfig struct {
 // Channel returns the host end of the channel whose guest-side descriptor
 // number is given (FDProxy/FDDNS/FDRunner), or nil when out of range.
 func (s *Sandbox) Channel(guestFD int) *os.File {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
 	idx := guestFD - FDProxy // hostEnds are stored in channel order
 	if idx < 0 || idx >= len(s.hostEnds) {
 		return nil
@@ -81,15 +83,24 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 			var lc net.ListenConfig
 			bound, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p.HostPort)))
 			if err != nil {
+				s.closeMu.Lock()
 				for _, opened := range s.portListeners {
 					_ = opened.Close()
 				}
 				s.portListeners = nil
+				s.closeMu.Unlock()
 				return fmt.Errorf("ports forward %q: bind 127.0.0.1:%d: %w", p.Name, p.HostPort, err)
 			}
 			ln = bound
 		}
+		s.closeMu.Lock()
+		if s.closed {
+			s.closeMu.Unlock()
+			_ = ln.Close()
+			return fmt.Errorf("ports forward: sandbox closed")
+		}
 		s.portListeners = append(s.portListeners, ln)
+		s.closeMu.Unlock()
 		go func() { _ = portsfw.Forward(sess, ln, p.Guest) }()
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/trust"
 )
 
 const repoConfig = `
@@ -54,6 +55,10 @@ func runInSandboxWithConfig(
 	if err := os.WriteFile(filepath.Join(dir, ".keg.yaml"), []byte(cfgContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	storePath := trust.DefaultTrustPath()
+	store, _ := trust.LoadFile(storePath)
+	_, _ = trust.Approve(store, dir, []byte(cfgContent))
+	_ = trust.SaveFile(storePath, store)
 	tmpDir := t.TempDir()
 
 	var out bytes.Buffer

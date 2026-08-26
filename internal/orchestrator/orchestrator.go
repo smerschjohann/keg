@@ -4,6 +4,7 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -18,6 +19,22 @@ type SecretBind struct {
 	HostPath  string // absolute host path of the secret file
 	GuestPath string // /run/secrets/<name>
 }
+
+// EnvKeepMarkerName is the environment variable that passes the whitelist
+// configuration from host to the resident guest process.
+const EnvKeepMarkerName = "KEG_ENV_KEEP"
+
+// EnvKeepMarker is the JSON structure transported via KEG_ENV_KEEP.
+type EnvKeepMarker struct {
+	Core    []string          `json:"core,omitempty"`
+	Set     map[string]string `json:"set,omitempty"`
+	Inherit []string          `json:"inherit,omitempty"`
+	Unset   []string          `json:"unset,omitempty"`
+	All     bool              `json:"all,omitempty"`
+}
+
+// CoreEnvVars lists the variables managed directly by keg.
+var CoreEnvVars = []string{"HOME", "TMPDIR", "SHELL", "PATH", "CODE_KEG"}
 
 // FDProxy/FDDNS/FDRunner name the guest-side descriptors. bwrap (>= 0.11)
 // passes cmd.ExtraFiles through verbatim starting at fd 3 — there is no
@@ -97,9 +114,11 @@ type Plan struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	Mounts   []config.Mount    // custom binds, template-resolved
-	EnvUnset []string          // additional vars to strip beyond HostDeniedEnvVars
-	EnvSet   map[string]string // sandbox environment values
+	Mounts        []config.Mount    // custom binds, template-resolved
+	EnvUnset      []string          // additional vars to strip beyond HostDeniedEnvVars
+	EnvSet        map[string]string // sandbox environment values
+	EnvInherit    []string          // host environment variables to pass through
+	EnvInheritAll bool              // pass through all host environment variables (except denied)
 
 	BwrapArgs      []string // raw extra args, appended after all derived args
 	AllowWeakBwrap bool     // security.allow_weak_bwrap from user config
@@ -364,6 +383,20 @@ func BuildArgs(p Plan) ([]string, error) {
 	}
 	args = append(args, "--setenv", "PATH", path)
 
+	// Explicit environment whitelist marker for the resident guest process
+	marker := EnvKeepMarker{
+		Core:    CoreEnvVars,
+		Set:     p.EnvSet,
+		Inherit: sortedStrings(p.EnvInherit),
+		Unset:   sortedStrings(p.EnvUnset),
+		All:     p.EnvInheritAll,
+	}
+	markerBytes, err := json.Marshal(marker)
+	if err != nil {
+		return nil, fmt.Errorf("marshal env keep marker: %w", err)
+	}
+	args = append(args, "--setenv", EnvKeepMarkerName, string(markerBytes))
+
 	// Guest entrypoint staging: the sandbox has no host paths, so the
 	// keg binary is bound into a fresh tmpfs dir and executed there;
 	// its argv[1] dispatches to guestMain (see cmd/keg main).
@@ -400,4 +433,10 @@ func sortedKeys(m map[string]string) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func sortedStrings(s []string) []string {
+	out := slices.Clone(s)
+	slices.Sort(out)
+	return out
 }

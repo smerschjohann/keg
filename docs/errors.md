@@ -60,6 +60,16 @@ Tests abgesichert (siehe `AGENTS.md` §1).
 * **Ursache:** Das Ziel-Repository versucht potenziell unsichere Bubblewrap-Flags (z. B. `--share-net`, `--dev-bind /`) zu erzwingen.
 * **Behebung:** Wenn beabsichtigt, in der Host-User-Konfiguration (`~/.config/keg/config.yaml`) unter `security.allow_weak_bwrap: true` freigeben.
 
+### 2.8 Unbestätigte oder geänderte Repository-Konfiguration (Trust-Gate)
+* **Meldung:** `repository configuration at <path> is untrusted or has changed (run 'keg trust' to approve)`
+* **Ursache:** Die `.keg.yaml` ist neu oder wurde seit der letzten Bestätigung verändert, und die Ausführung erfolgt in einer nicht-interaktiven Umgebung (kein TTY).
+* **Behebung:** Die Konfiguration mit `keg trust` auf dem Host genehmigen oder interaktiv im Terminal starten und die Bestätigungsabfrage (`yes/no`) beantworten.
+
+### 2.9 Gesperrte Host-Umgebungsvariable im Passthrough (`env.inherit`)
+* **Meldung:** `cannot pass through denied host environment variable "<VAR>" — use explicit setting (-e <VAR>=<value> or env.set) instead`
+* **Ursache:** Es wurde versucht, eine sensible Umgebungsvariable (z. B. `HTTP_PROXY`, `AWS_SESSION_TOKEN`, `OPENAI_API_KEY`) in der `.keg.yaml` unter `env.inherit` durchzureichen.
+* **Behebung:** Den Wert explizit setzen (z. B. via `env.set` oder beim CLI-Aufruf `-e <VAR>` / `-e <VAR>=<value>`), da Repositories sensible Host-Credentials niemals ungefragt erben dürfen.
+
 ---
 
 ## 3. Egress- und Netzwerkrichtlinien

@@ -71,9 +71,33 @@ bin/keg run --isolate-caches -- go build ./...
 
 # Parallele Sandbox-Instanzen mit deterministischem Namen:
 bin/keg run --name worker-1 -- just test
+
+# Host-Umgebungsvariablen durchreichen oder setzen:
+bin/keg run -e LANG -e COLORTERM -e CUSTOM_VAR=value -- bash
+
+# Alle Host-Variablen durchreichen (außer gesperrte Credentials/Proxies):
+bin/keg run --inherit-all -- bash
+
+# Kombination: Alle Host-Variablen und gezielt gesperrte Variablen durchreichen:
+bin/keg run --inherit-all -e AWS_SESSION_TOKEN -e HTTP_PROXY -- bash
 ```
 
-#### 2. Layer-Verwaltung (`keg list`, `clean`, `clean-cache`)
+#### 2. Repository-Freigabe & Trust (`keg trust`)
+
+Nicht-leere `.keg.yaml`-Dateien unterliegen dem Repository-Trust-Gate:
+
+```bash
+# Aktuelle Repository-Konfiguration freigeben / genehmigen:
+bin/keg trust
+
+# Freigabe-Status prüfen (TRUSTED, CHANGED, NONE):
+bin/keg trust --status
+
+# Freigabe für das Repository widerrufen:
+bin/keg trust --revoke
+```
+
+#### 3. Layer-Verwaltung (`keg list`, `clean`, `clean-cache`)
 
 ```bash
 # Alle persistenten Disk- und Cache-Layer auflisten:
@@ -89,7 +113,7 @@ bin/keg clean-cache agent-feature
 bin/keg clean --all
 ```
 
-#### 3. Host-Delegation (`keg delegate`)
+#### 4. Host-Delegation (`keg delegate`)
 
 Innerhalb der Sandbox können freigegebene Tasks an den Host-Runner delegiert werden:
 
@@ -101,7 +125,7 @@ bin/keg delegate test-playwright login.spec.ts 8080
 bin/keg delegate git commit -m "feat: new feature"
 ```
 
-#### 4. Hintergrund-Daemon (`keg serve`)
+#### 5. Hintergrund-Daemon (`keg serve`)
 
 Startet den RPC-Daemon für Daemon- und Remote-Steuerung:
 
@@ -172,6 +196,14 @@ version: "1"
 # Vordefinierte Toolchain-Presets (golang, rust, python, node)
 templates:
   - golang
+
+# Umgebungsvariablen-Steuerung (Deny-by-default)
+env:
+  inherit:
+    - LANG
+    - COLORTERM
+  set:
+    LOG_FORMAT: json
 
 # Dynamische Secrets (0400 read-only unter /run/secrets/<name>)
 secrets:

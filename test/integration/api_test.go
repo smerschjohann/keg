@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smerschjohann/keg/internal/trust"
+
 	"github.com/smerschjohann/keg/pkg/keg"
 )
 
@@ -24,6 +26,10 @@ func TestIntegration_GoLibraryAPI(t *testing.T) {
 	if err := os.WriteFile(configFile, []byte("version: \"1\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	storePath := trust.DefaultTrustPath()
+	store, _ := trust.LoadFile(storePath)
+	_, _ = trust.Approve(store, repoDir, []byte("version: \"1\"\n"))
+	_ = trust.SaveFile(storePath, store)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 

@@ -158,6 +158,7 @@ func runGuestCommandPTY(argv []string) int {
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave
+	cmd.Env = buildWorkloadEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:  true,
 		Setctty: true,
@@ -231,6 +232,7 @@ func runGuestCommandWithStdio(argv []string, stdin io.Reader, stdout, stderr io.
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.Env = buildWorkloadEnv()
 
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "keg guest: exec %s: %v\n", argv[0], err)

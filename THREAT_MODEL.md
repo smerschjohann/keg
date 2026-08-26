@@ -267,18 +267,26 @@ Port-Forwards; Host-seitige Bindung ausschließlich auf `127.0.0.1`.
    durch polizeilich kontrollierte Kanäle: ausgehend Proxy/DNS
    (Deny-by-default), eingehend ausschließlich der deklarierte
    Port-Rückkanal mit Host-Bind 127.0.0.1.
-2. **Keine Erbe-Umgebung:** Host-Env (inkl. Proxy-/Cloud-Credentials) wird
-   nie geerbt; nur explizit gesetzte Werte.
-3. **Isolation nur verschärft:** Repo-Config kann bwrap nie lockern;
+2. **Deny-by-default für Host-Umgebung & Explizite Pass-Through-Kontrolle:**
+   Host-Env (inkl. Proxy-/Cloud-Credentials) wird standardmäßig nie geerbt.
+   Die Workload erhält ausschließlich Core-Variablen (`HOME`, `TMPDIR`, `SHELL`, `PATH`, `CODE_KEG`),
+   explizit deklarierte Passthrough-Variablen (`inherit` / `-e VAR`) oder gesetzte Werte (`set` / `-e K=V`).
+   Gesperrte Sicherheitsvariablen (`HTTP_PROXY`, `AWS_SESSION_TOKEN`, API-Keys etc.) können
+   über `inherit` oder `inherit_all` niemals aus dem Host-Env übernommen werden.
+3. **Repository-Trust-Gate:** Nicht-leere Repository-Konfigurationen (`.keg.yaml`)
+   werden vor Ausführung kryptografisch (SHA-256) gegen den lokalen Trust-Store
+   geprüft. Unbestätigte oder geänderte Konfigurationen erfordern eine explizite
+   Zustimmung des Benutzers.
+4. **Isolation nur verschärft:** Repo-Config kann bwrap nie lockern;
    Isolation-schwächende Flags brauchen User-Config-Freigabe.
-4. **Ausführung braucht User-Config:** Programmausführung zur Werte-
+5. **Ausführung braucht User-Config:** Programmausführung zur Werte-
    beschaffung (`vars_from_exec`, `secret_sources`) existiert nur im
    vertrauenswürdigen Kontext.
-5. **Delegation ist explizit:** Jeder Host-Job matcht exact/prefix/raw +
+6. **Delegation ist explizit:** Jeder Host-Job matcht exact/prefix/raw +
    Argument-Patterns; alles andere = Exit 126 mit Grund.
-6. **Secrets minimal-exponiert:** Dateien ro, atomar, kurzlebig, nie in
+7. **Secrets minimal-exponiert:** Dateien ro, atomar, kurzlebig, nie in
    Templates/Logs/API.
-7. **Aufräumen garantiert:** Lifecycle hängt an FDs/Signalen — keine
+8. **Aufräumen garantiert:** Lifecycle hängt an FDs/Signalen — keine
    verwaisten Prozesse, Sockets, Timer oder Secret-Reste.
 
 Abweichungen von diesen Invarianten sind sicherheitsrelevante Bugs und

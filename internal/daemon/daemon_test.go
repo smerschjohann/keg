@@ -12,13 +12,19 @@ import (
 	"time"
 
 	"github.com/smerschjohann/keg/internal/frame"
+	"github.com/smerschjohann/keg/internal/trust"
 )
 
 func writeRepoConfig(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, ".keg.yaml"), []byte("version: \"1\"\n"), 0o600); err != nil {
+	content := []byte("version: \"1\"\n")
+	if err := os.WriteFile(filepath.Join(dir, ".keg.yaml"), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	storePath := trust.DefaultTrustPath()
+	store, _ := trust.LoadFile(storePath)
+	_, _ = trust.Approve(store, dir, content)
+	_ = trust.SaveFile(storePath, store)
 }
 
 func sendRequest(t *testing.T, conn net.Conn, req Request) Response {

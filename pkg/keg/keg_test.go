@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/trust"
 )
 
 func writeFile(t *testing.T, path string) {
@@ -17,9 +18,14 @@ func writeFile(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("version: \"1\"\n"), 0o600); err != nil {
+	content := []byte("version: \"1\"\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	storePath := trust.DefaultTrustPath()
+	store, _ := trust.LoadFile(storePath)
+	_, _ = trust.Approve(store, filepath.Dir(path), content)
+	_ = trust.SaveFile(storePath, store)
 }
 
 func TestPublicAPI_OptionsAndDefaults(t *testing.T) {

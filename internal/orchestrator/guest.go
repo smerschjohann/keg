@@ -2,9 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/landlock"
@@ -290,4 +293,98 @@ func applyProxyEnv() {
 	}
 	_ = os.Setenv("NO_PROXY", "localhost,127.0.0.1")
 	_ = os.Setenv("no_proxy", "localhost,127.0.0.1")
+}
+
+var internalEnvMarkers = map[string]bool{
+	EnvKeepMarkerName: true,
+	EnvDelegation:     true,
+	EnvProxyBridge:    true,
+	EnvPortsForward:   true,
+	EnvLandlock:       true,
+}
+
+// BuildKeepEnv constructs the explicit environment for the workload command
+// using the KEG_ENV_KEEP marker and the current process environment.
+func BuildKeepEnv(markerData []byte, environ []string) []string {
+	var marker EnvKeepMarker
+	hasMarker := false
+	if len(markerData) > 0 {
+		if err := json.Unmarshal(markerData, &marker); err == nil {
+			hasMarker = true
+		}
+	}
+
+	envMap := make(map[string]string, len(environ))
+	for _, e := range environ {
+		k, v, found := strings.Cut(e, "=")
+		if found {
+			envMap[k] = v
+		}
+	}
+
+	out := make(map[string]string)
+	if hasMarker {
+		if marker.All {
+			for k, v := range envMap {
+				if slices.Contains(HostDeniedEnvVars, k) || internalEnvMarkers[k] || slices.Contains(marker.Unset, k) {
+					continue
+				}
+				out[k] = v
+			}
+		} else {
+			for _, name := range marker.Inherit {
+				if slices.Contains(HostDeniedEnvVars, name) || internalEnvMarkers[name] || slices.Contains(marker.Unset, name) {
+					continue
+				}
+				if val, ok := envMap[name]; ok {
+					out[name] = val
+				}
+			}
+		}
+		for _, name := range marker.Core {
+			if val, ok := envMap[name]; ok {
+				out[name] = val
+			}
+		}
+		if proxyAddr := envMap[EnvProxyBridge]; proxyAddr != "" && proxyAddr != "0" {
+			url := "http://" + proxyAddr
+			out["HTTP_PROXY"] = url
+			out["HTTPS_PROXY"] = url
+			out["http_proxy"] = url
+			out["https_proxy"] = url
+			out["NO_PROXY"] = "localhost,127.0.0.1"
+			out["no_proxy"] = "localhost,127.0.0.1"
+		}
+		for k, v := range marker.Set {
+			out[k] = v
+		}
+	} else {
+		// Fallback for direct invocations without marker: keep all non-denied, non-internal
+		for k, v := range envMap {
+			if slices.Contains(HostDeniedEnvVars, k) || internalEnvMarkers[k] {
+				continue
+			}
+			out[k] = v
+		}
+		if proxyAddr := envMap[EnvProxyBridge]; proxyAddr != "" && proxyAddr != "0" {
+			url := "http://" + proxyAddr
+			out["HTTP_PROXY"] = url
+			out["HTTPS_PROXY"] = url
+			out["http_proxy"] = url
+			out["https_proxy"] = url
+			out["NO_PROXY"] = "localhost,127.0.0.1"
+			out["no_proxy"] = "localhost,127.0.0.1"
+		}
+	}
+
+	res := make([]string, 0, len(out))
+	for _, k := range sortedKeys(out) {
+		res = append(res, k+"="+out[k])
+	}
+	return res
+}
+
+func buildWorkloadEnv() []string {
+	markerStr := os.Getenv(EnvKeepMarkerName)
+	return BuildKeepEnv([]byte(markerStr), os.Environ())
 }
