@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/smerschjohann/keg/internal/orchestrator"
 )
 
 func writeFile(t *testing.T, path string) {
@@ -74,11 +76,12 @@ func TestPublicAPI_LaunchContextCancel(t *testing.T) {
 }
 
 func TestPublicAPI_ValidationErrors(t *testing.T) {
-	// Missing .keg.yaml
-	emptyDir := t.TempDir()
-	_, err := Launch(context.Background(), emptyDir)
-	if err == nil {
-		t.Fatal("expected error for missing .keg.yaml, got nil")
+	// A missing .keg.yaml WITHOUT an explicit path is intentionally
+	// allowed since c10a3a4 ("allow without repo config"): empty defaults
+	// apply. Pinned here at plan level.
+	_, _, err := orchestrator.BuildPlan(t.TempDir(), "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("missing .keg.yaml without explicit path must fall back to defaults: %v", err)
 	}
 
 	// Mutually exclusive overlay flags

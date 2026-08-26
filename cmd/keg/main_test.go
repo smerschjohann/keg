@@ -167,17 +167,18 @@ func TestCLI_CleanErrors(t *testing.T) {
 }
 
 func TestCLI_RunWithoutConfigFailsWithClearError(t *testing.T) {
-	// run is implemented since WP-M1; in a directory without
-	// .keg.yaml it must fail naming the expected file.
-	cmd := NewCommand()
-	var out strings.Builder
-	cmd.Writer = &out
-	err := cmd.Run(context.Background(), []string{"keg", "run"})
-	if err == nil {
-		t.Fatal("run without repo config must fail")
-	}
-	if !strings.Contains(err.Error(), ".keg.yaml") {
-		t.Errorf("error must name .keg.yaml: %v", err)
+	// Since c10a3a4 ("allow without repo config") `run` in a directory
+	// WITHOUT .keg.yaml falls back to default settings — it must NOT
+	// be invoked here for real: inside `go test`, Launch would re-exec
+	// THIS test binary as sandbox guest (/proc/self/exe), recursing
+	// through the whole suite forever.
+	//
+	// Hard CLI failure contract stays pinned via an explicit --config
+	// path: BuildPlan errors before any process is spawned.
+	dir := t.TempDir()
+	err := runCLI(t, "--config", filepath.Join(dir, "absent-config.yaml"), "run", "--repo", dir)
+	if err == nil || !strings.Contains(err.Error(), "absent-config.yaml") {
+		t.Fatalf("explicit missing --config must fail naming the file, got: %v", err)
 	}
 }
 

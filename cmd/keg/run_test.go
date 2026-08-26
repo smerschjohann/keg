@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -34,13 +35,27 @@ func writeFile(t *testing.T, path, content string) {
 }
 
 func TestBuildRunPlan_MissingRepoConfigIsClearError(t *testing.T) {
+	// A missing .keg.yaml WITHOUT an explicit --config path is
+	// intentionally allowed since c10a3a4 ("allow without repo config"):
+	// the plan falls back to empty defaults.
 	dir := t.TempDir()
-	_, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
-	if err == nil {
-		t.Fatal("missing repo config must fail")
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("missing .keg.yaml without explicit path must default: %v", err)
 	}
-	if !strings.Contains(err.Error(), ".keg.yaml") {
-		t.Errorf("error must name the expected file: %v", err)
+	wantRoot, _ := filepath.EvalSymlinks(dir)
+	if plan.RepoRoot != wantRoot && plan.RepoRoot != filepath.Clean(dir) {
+		t.Errorf("RepoRoot = %q, want %q", plan.RepoRoot, dir)
+	}
+	if len(plan.SNIDomains) != 0 {
+		t.Errorf("default plan must have no whitelist, got %v", plan.SNIDomains)
+	}
+
+	// An explicit --config path that does not exist must fail hard and
+	// name the expected file.
+	_, err = buildRunPlan(dir, filepath.Join(t.TempDir(), "absent-config.yaml"), "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err == nil || !strings.Contains(err.Error(), "absent-config.yaml") {
+		t.Fatalf("expected explicit missing config to name the file, got: %v", err)
 	}
 }
 
