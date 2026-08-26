@@ -759,13 +759,6 @@ nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
 **Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
 Modus/tcp_endpoints ✅) · **M4 ✅** (§6.1–§6.4) · **M5 ✅** (§7.1, §7.2
-vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung) · **M7 ✅** (Parallel-Instanzen, Audit/Slog-Logging, Fehlerkatalog) · **M8 ✅** (Secrets-Engine, Landlock LSM, CGO/FD-Hardening).
-Erster nutzbarer Schnitt nach M5/M6/M7/M8 vollständig für den Bestands-Workflow nutzbar:
-isolierte Shell mit allen Overlay-Modi (ephemeral, disk-overlay, isolate-caches,
-isolated-cache-name) sowie Layer-Management (list/clean/clean-cache),
-parallelen benannten Instanzen (`--name`), zentralem structured Logging & Audit-Datei,
-dynamischen Dateisecrets unter `/run/secrets` mit atomarem Host-Refresher, Landlock LSM FS-Restriktionen,
-kontrolliertem HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf
-:53 (Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
-Proxy- oder Transparent-Modus (rohes TCP via DNS-Korrelation) sowie
-Port-Rückkanal (Kanal E) und sichere Host-Delegation (Kanal C).
+vollständig inkl. e2e) · **M6 ✅** (Overlay-Modi, Cache-Isolation, Layer-Management, Stufenlöschung) · **M7 ✅** (Parallel-Instanzen, Audit/Slog-Logging, Fehlerkatalog) · **M8 ✅** (Secrets-Engine, Landlock LSM, CGO/FD-Hardening) · **M9 ✅** (Go-Library-API `pkg/keg`, Daemon-Server `internal/daemon`, `keg serve`).
+
+Alle Meilensteine des Implementierungsplans (M1–M9) sind vollständig umgesetzt, getestet und lint- sowie race-frei.
