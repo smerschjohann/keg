@@ -137,6 +137,13 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	// bwrap so the sandbox shares that namespace. Channel A keeps its own
 	// socketpair (fd 3); fd 4/5 stay reserved for future channels.
 	stage := &stageConfig{BwrapPath: bin, Args: args, DNS: p.EgressDNS, Transparent: p.Transparent}
+	if p.Transparent {
+		ip, err := OutboundIPv4()
+		if err != nil {
+			return nil, fmt.Errorf("transparent mode: %w", err)
+		}
+		stage.OutboundIP = ip
+	}
 	if len(p.TCPEndpoints) > 0 {
 		var ports []int
 		for _, ep := range p.TCPEndpoints {

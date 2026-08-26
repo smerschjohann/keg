@@ -14,17 +14,36 @@ import (
 )
 
 // Transparent mode: the workload ignores HTTP_PROXY, so the stage builds a
-// minimal "real" network (default route via dummy0) and forces every TCP
-// connection through a local SNI-splicing relay via nftables REDIRECT.
-// Policy stays host-side: the relay synthesizes an HTTP CONNECT carrying the
-// SNI hostname over the fd3 channel — Proxy.Serve decides, audits and
-// tunnels exactly as in explicit-proxy mode.
+// minimal "real" network (pod IP on lo, default route via lo) and forces
+// every TCP connection through a local SNI-splicing relay via nftables
+// REDIRECT. Policy stays host-side: the relay synthesizes an HTTP CONNECT
+// carrying the SNI hostname or the pre-NAT IP:port over the fd3 channel —
+// Proxy.Serve decides, audits and tunnels exactly as in explicit-proxy mode.
 
 const transparentListenAddr = "127.0.0.1:7443"
 
-// setupTransparentNet installs dummy route + nftables ruleset. Requires the
-// stage's capabilities (runs before dropCapabilities).
-func setupTransparentNet(ports []int) error {
+// OutboundIPv4 reports the host's primary egress IPv4 (route lookup only,
+// no packet is sent). The stage pins this address on loopback so sandbox
+// connections pick a valid source and relay replies can find their way
+// back; without it the source stays 0.0.0.0 and every flow blackholes.
+func OutboundIPv4() (string, error) {
+	// Route-lookup dial only — no packet is sent; the context bounds just
+	// this lookup, there is nothing else to cancel.
+	conn, err := new(net.Dialer).DialContext(context.Background(), "udp", "8.8.8.8:53")
+	if err != nil {
+		return "", fmt.Errorf("detect outbound IPv4: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	ip := conn.LocalAddr().(*net.UDPAddr).IP.To4()
+	if ip == nil || ip.IsUnspecified() {
+		return "", fmt.Errorf("detect outbound IPv4: no usable source address")
+	}
+	return ip.String(), nil
+}
+
+// setupTransparentNet installs the pod IP on loopback plus nftables ruleset.
+// Requires the stage's capabilities (runs before dropCapabilities).
+func setupTransparentNet(outboundIP string, ports []int) error {
 	run := func(name string, args ...string) error {
 		cmd := exec.CommandContext(context.Background(), name, args...)
 		out, err := cmd.CombinedOutput()
@@ -33,11 +52,15 @@ func setupTransparentNet(ports []int) error {
 		}
 		return nil
 	}
-	for _, step := range [][]string{
+	steps := [][]string{
 		// A default route via lo is enough: it makes connect() succeed up
 		// to the OUTPUT redirect; no packets ever leave the namespace.
 		{"ip", "route", "replace", "default", "dev", "lo"},
-	} {
+	}
+	if outboundIP != "" {
+		steps = append(steps, []string{"ip", "addr", "add", outboundIP + "/32", "dev", "lo"})
+	}
+	for _, step := range steps {
 		if err := run(step[0], step[1:]...); err != nil {
 			return fmt.Errorf("setup: %w", err)
 		}
@@ -64,7 +87,7 @@ func rulesetReader(ports []int) io.Reader {
 	var b strings.Builder
 	b.WriteString(`table ip keg {
   chain natout {
-    type nat hook output priority -100; policy accept;
+    type nat hook output priority dstnat; policy accept;
     ip daddr 127.0.0.0/8 return
     udp dport 53 redirect to :53`)
 	for _, port := range ports {
@@ -75,10 +98,10 @@ func rulesetReader(ports []int) io.Reader {
 	}
 	b.WriteString(`
   }
-  chain enforce {
-    type filter hook output priority 10; policy accept;
+  chain postr {
+    type filter hook postrouting priority srcnat; policy accept;
     ip daddr 127.0.0.0/8 accept
-    udp dport 443 drop
+    ct state established,related accept
     drop
   }
 }
