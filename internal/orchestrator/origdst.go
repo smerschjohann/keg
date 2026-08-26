@@ -30,7 +30,7 @@ func originalDest(conn net.Conn) (net.IP, int, bool) {
 		saLen := uint32(len(sa))
 		_, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT,
 			fd, syscall.SOL_IP, soOriginalDst,
-			uintptr(unsafe.Pointer(&sa[0])), uintptr(unsafe.Pointer(&saLen)), 0)
+			uintptr(unsafe.Pointer(&sa[0])) /* #nosec G103 -- kernel getsockopt contract */, uintptr(unsafe.Pointer(&saLen)) /* #nosec G103 -- kernel getsockopt contract */, 0)
 		if errno != 0 {
 			serr = fmt.Errorf("getsockopt(SO_ORIGINAL_DST): %w", errno)
 		}
