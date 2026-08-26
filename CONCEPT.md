@@ -983,10 +983,9 @@ Einschränkungen aus Sicherheitsgründen:
 | Audit | Proxy- und Runner-Entscheidungen werden geloggt (allow/deny + Grund) |
 | Secrets | `/run/secrets` ro, Dateimode 0400/Dir 0700; atomare Updates via Directory-Bind; Inhalte nie in Templates/Logs/argv |
 
-**Bewusste Trade-offs** (aus dem Bestand übernommen): kein bwrap
-`--new-session`, damit Job Control/Ctrl+C in der interaktiven Shell wirkt;
-RW-Cache-Binds bedeuten, dass Build-Artefakte im Host-Cache landen — optional
-per `--isolate-caches` abschaltbar.
+**Bewusste Trade-offs & Designentscheidungen**:
+* **Kein `bwrap --new-session`**: `bwrap --new-session` dient primär der Abwehr von TIOCSTI-Terminal-Injection (`ioctl(TIOCSTI)`). keg benötigt dies nicht, da der Host für interaktive Sessions ein eigenes Pseudo-Terminal allokiert (`openPTY()`) und dem Gast ausschließlich das Slave-Ende zuweist (nicht-interaktiv reine Pipes). Das Host-TTY wird nie geteilt. Durch den Verzicht auf `--new-session` bleiben interaktive Job Control, Signale (`Ctrl+C`) und Terminal-Resize (`SIGWINCH`) voll funktionsfähig.
+* **Geteilte Build-Caches**: RW-Cache-Binds bedeuten, dass Build-Artefakte im Host-Cache landen — optional per `--isolate-caches` abschaltbar.
 
 ### 6.1 Defense-in-Depth: Landlock (optional)
 
