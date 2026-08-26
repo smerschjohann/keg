@@ -199,23 +199,23 @@ func dialTarget(_ net.Conn, target string, cfg Server) (net.Conn, error) {
 	return conn, nil
 }
 
-// tunnel copies bidirectionally; whichever direction finishes first closes
-// both ends so the other Copy unblocks immediately (no half-dead tunnels).
+// tunnel copies bidirectionally. Whichever direction finishes first
+// closes BOTH ends so the other Copy unblocks immediately — no half-dead
+// tunnels, no leaked goroutines. (TCP half-close sequencing is sacrificed;
+// HTTP proxying never needs it before the peer responds.)
 func tunnel(a, b net.Conn) {
+	var once sync.Once
+	closeBoth := func() {
+		once.Do(func() {
+			_ = a.Close()
+			_ = b.Close()
+		})
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); _, _ = io.Copy(a, b); halfClose(a); _ = b.Close() }()
-	go func() { defer wg.Done(); _, _ = io.Copy(b, a); halfClose(b); _ = a.Close() }()
+	go func() { defer wg.Done(); _, _ = io.Copy(a, b); closeBoth() }()
+	go func() { defer wg.Done(); _, _ = io.Copy(b, a); closeBoth() }()
 	wg.Wait()
-}
-
-// halfClose performs a TCP half-close when supported, signalling EOF to the
-// peer while keeping the return path open briefly.
-func halfClose(c net.Conn) {
-	type halfCloser interface{ CloseWrite() error }
-	if hc, ok := c.(halfCloser); ok {
-		_ = hc.CloseWrite()
-	}
 }
 
 func writeSimpleStatus(w io.Writer, code int, message string) {
