@@ -42,8 +42,8 @@ func TestSandboxProxyChannelDenied(t *testing.T) {
 		},
 		func(sb *orchestrator.Sandbox) {
 			err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
-				Whitelist: []string{"proxy.golang.org"},
-				Audit:     &audit,
+				SNIDomains: []string{"proxy.golang.org"},
+				Audit:      &audit,
 			})
 			if err != nil {
 				t.Fatalf("start egress proxy: %v", err)

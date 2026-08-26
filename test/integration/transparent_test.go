@@ -50,7 +50,7 @@ if curl --cacert /run/ca/ca.crt --max-time 5 -sf https://evil.invalid/version >/
 		func(sb *orchestrator.Sandbox) {
 			if err := sb.StartEgressDNS(orchestrator.DNSConfig{
 				Whitelist: []string{"*.svc.cluster.local", "cluster.local"},
-			}); err != nil {
+			}, nil); err != nil {
 				t.Errorf("egress dns: %v", err)
 			}
 		})

@@ -62,7 +62,7 @@ if getent hosts blocked.invalid >/dev/null 2>&1; then echo deny-failed; else ech
 			if err := sb.StartEgressDNS(orchestrator.DNSConfig{
 				Whitelist: []string{"*.svc.cluster.local", "cluster.local"},
 				Upstream:  upstream,
-			}); err != nil {
+			}, nil); err != nil {
 				t.Errorf("egress dns: %v", err)
 			}
 		})
