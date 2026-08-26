@@ -242,3 +242,32 @@ func TestExpandPath(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRepo_NetworkModeValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		wantErr bool
+	}{
+		{name: "empty mode defaults", mode: "", wantErr: false},
+		{name: "proxy mode", mode: "proxy", wantErr: false},
+		{name: "transparent mode", mode: "transparent", wantErr: false},
+		{name: "both modes in parallel", mode: "both", wantErr: false},
+		{name: "unknown mode", mode: "mesh", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yamlText := "version: \"1\"\nnetwork:\n  mode: " + tt.mode + "\n"
+			if tt.mode == "" {
+				yamlText = "version: \"1\"\n"
+			}
+			_, err := ParseRepo([]byte(yamlText))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseRepo(mode=%q) error = %v, wantErr %v", tt.mode, err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "network.mode") {
+				t.Errorf("error %q must mention network.mode", err)
+			}
+		})
+	}
+}

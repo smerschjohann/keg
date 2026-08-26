@@ -799,3 +799,31 @@ func TestBuildRunPlan_LandlockConfig(t *testing.T) {
 		t.Errorf("EnvSet[%s] = %q, want 'on'", orchestrator.EnvLandlock, plan.EnvSet[orchestrator.EnvLandlock])
 	}
 }
+
+// TestBuildRunPlan_BothModeEnablesParallelPaths pins that network.mode
+// "both" runs the explicit HTTP-proxy path (proxy env vars) AND the
+// transparent SNI path (nftables relay) at the same time.
+func TestBuildRunPlan_BothModeEnablesParallelPaths(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+network:
+  mode: both
+  sni_domains:
+    - proxy.golang.org
+`)
+	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if !plan.Transparent {
+		t.Error("plan.Transparent not set for mode \"both\"")
+	}
+	url := "http://" + proxy.DefaultBridgeAddr
+	if plan.EnvSet["HTTPS_PROXY"] != url {
+		t.Errorf("EnvSet[HTTPS_PROXY] = %q, want %q (proxy env must stay active in \"both\" mode)", plan.EnvSet["HTTPS_PROXY"], url)
+	}
+	if got := plan.EnvSet[orchestrator.EnvProxyBridge]; got != proxy.DefaultBridgeAddr {
+		t.Errorf("EnvSet[%s] = %q, want %q", orchestrator.EnvProxyBridge, got, proxy.DefaultBridgeAddr)
+	}
+}

@@ -122,8 +122,10 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		Overlay:      overlay,
 		SNIDomains:   sniDomains,
 		TCPEndpoints: tcpEndpoints,
-		Transparent:  mode == "transparent",
-		Landlock:     effective.Security.Landlock,
+		// "both" enables the transparent SNI relay WITHOUT disabling the
+		// explicit proxy path — both routes share the host-side policy.
+		Transparent: mode == "transparent" || mode == "both",
+		Landlock:    effective.Security.Landlock,
 	}
 	if plan.Landlock == "" {
 		plan.Landlock = "auto"
@@ -251,7 +253,7 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		}
 	}
 
-	if !plan.Transparent {
+	if !slices.Contains([]string{"transparent"}, mode) {
 		for k, v := range ProxyEnv(plan.SNIDomains) {
 			plan.EnvSet[k] = v
 		}

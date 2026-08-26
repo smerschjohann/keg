@@ -124,8 +124,11 @@ func (p *PortSpec) UnmarshalYAML(value *yaml.Node) error {
 
 // Network configures egress policy.
 type Network struct {
-	Mode string `yaml:"mode"` // "" | "proxy" | "transparent"
-	DNS  DNS    `yaml:"dns"`
+	Mode string `yaml:"mode"` // "" | "proxy" | "transparent" | "both"
+	// "both" runs the explicit HTTP-proxy path (HTTP(S)_PROXY env) and the
+	// transparent SNI path in parallel: both routes converge on the same
+	// host-side whitelist proxy, so the policy stays identical.
+	DNS DNS `yaml:"dns"`
 	// SNIDomains: name-based policy — CONNECT (proxy mode) resp. TLS SNI
 	// (transparent mode, TCP/443 only).
 	SNIDomains []string `yaml:"sni_domains"`
@@ -353,9 +356,9 @@ func (r *Repo) validate() error {
 		}
 	}
 	switch r.Network.Mode {
-	case "", "proxy", "transparent":
+	case "", "proxy", "transparent", "both":
 	default:
-		return fmt.Errorf("repo config: network.mode must be proxy|transparent")
+		return fmt.Errorf("repo config: network.mode must be proxy|transparent|both")
 	}
 	for i, ep := range r.Network.TCPEndpoints {
 		if ep.Host == "" {
