@@ -175,15 +175,45 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	}
 	plan.AuditFile = auditPath
 
-	// Secrets: initial fetch
+	// Secrets: resolve every requested name via the user config — either
+	// as an existing HOST FILE to bind-mount (secrets map) or as a dynamic
+	// secret_sources command fetched before launch and refreshed later.
 	if len(repo.Secrets) > 0 {
-		secretsDir := filepath.Join(plan.TmpDir, "secrets")
-		if err := secrets.FetchInitial(context.Background(), repo.Secrets, effective.SecretSources, secretsDir); err != nil {
-			return Plan{}, nil, err
+		var fetchRefs []config.SecretRef
+		for _, ref := range repo.Secrets {
+			if rawPath, ok := effective.Secrets[ref.Name]; ok {
+				hostPath, err := config.ExpandPath(rawPath)
+				if err != nil {
+					return Plan{}, nil, fmt.Errorf("secret %q: %w", ref.Name, err)
+				}
+				if abs, absErr := filepath.Abs(hostPath); absErr == nil {
+					hostPath = abs
+				}
+				info, statErr := os.Stat(hostPath) // #nosec G703 -- path from trusted user config (same trust level as secret_sources cmds); repos supply names only
+				if statErr != nil || info.IsDir() {
+					return Plan{}, nil, fmt.Errorf("secret %q: host file %q does not exist", ref.Name, rawPath)
+				}
+				plan.SecretPathBinds = append(plan.SecretPathBinds, SecretBind{
+					HostPath:  hostPath,
+					GuestPath: "/run/secrets/" + ref.Name,
+				})
+			} else if _, hasSource := effective.SecretSources[ref.Name]; hasSource {
+				fetchRefs = append(fetchRefs, ref)
+			} else {
+				return Plan{}, nil, fmt.Errorf(
+					"secret %q requested by repository is neither defined in secret_sources nor in secrets (both user config)",
+					ref.Name)
+			}
 		}
-		plan.SecretDir = secretsDir
-		plan.Secrets = repo.Secrets
-		plan.SecretSources = effective.SecretSources
+		if len(fetchRefs) > 0 {
+			secretsDir := filepath.Join(plan.TmpDir, "secrets")
+			if err := secrets.FetchInitial(context.Background(), fetchRefs, effective.SecretSources, secretsDir); err != nil {
+				return Plan{}, nil, err
+			}
+			plan.SecretDir = secretsDir
+			plan.Secrets = fetchRefs
+			plan.SecretSources = effective.SecretSources
+		}
 		for _, s := range repo.Secrets {
 			if s.Env != "" {
 				plan.EnvSet[s.Env] = "/run/secrets/" + s.Name

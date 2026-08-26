@@ -271,3 +271,52 @@ func TestParseRepo_NetworkModeValues(t *testing.T) {
 		})
 	}
 }
+
+func TestParseUser_SecretValues(t *testing.T) {
+	user, err := ParseUser([]byte(`
+secrets:
+  ai_token: "tok-literal-123"
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if user.Secrets["ai_token"] != "tok-literal-123" {
+		t.Errorf("secret ai_token = %q, want literal value", user.Secrets["ai_token"])
+	}
+}
+
+func TestValidateUser_EmptySecretNameRejected(t *testing.T) {
+	_, err := ParseUser([]byte("secrets:\n  \"\": value\n"))
+	if err == nil {
+		t.Fatal("empty secret name must be rejected")
+	}
+	if !strings.Contains(err.Error(), "secrets") {
+		t.Errorf("error %q must mention secrets", err)
+	}
+}
+
+func TestValidateUser_DuplicateSecretNameRejected(t *testing.T) {
+	_, err := ParseUser([]byte(`
+secret_sources:
+  ai_token:
+    cmd: [op, read, x]
+secrets:
+  ai_token: /etc/host-file
+`))
+	if err == nil {
+		t.Fatal("secret defined in both secret_sources and secrets must be rejected")
+	}
+	if !strings.Contains(err.Error(), "ai_token") {
+		t.Errorf("error must name the clashing secret: %v", err)
+	}
+}
+
+func TestValidateUser_EmptySecretPathRejected(t *testing.T) {
+	_, err := ParseUser([]byte("secrets:\n  ai_token: \"\"\n"))
+	if err == nil {
+		t.Fatal("empty host path must be rejected")
+	}
+	if !strings.Contains(err.Error(), "secrets") {
+		t.Errorf("error %q must mention secrets", err)
+	}
+}

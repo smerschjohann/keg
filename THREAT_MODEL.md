@@ -140,7 +140,8 @@ Empirisch verifizierte Design-Punkte mit Sicherheitsrelevanz:
 | **I:** Secret-Leak in Logs/Templates/Vars | Hoch | Inhalte fließen nie durch Template-Kontext, Audit oder argv; Log nur `(changed\|unchanged\|error)` |
 | **T:** Race beim Refresh (halber Write sichtbar) | Niedrig | Atomarer Tausch via Temp-Datei + `rename()`; Directory-Bind macht Swap sofort sichtbar |
 | **E:** Refresher läuft weiter nach Sandbox-Ende | Niedrig | Goroutinen leben im keg-Prozess; Cleanup löscht Instanz-Verzeichnis |
-| **S:** Repo triggert Abruf beliebiger Secrets | Mittel | Repo deklariert nur Namen; Quelle (`cmd`, `interval`) liegt ausschließlich in der vertrauenswürdigen User-Config (TB5/TB6) |
+| **S:** Repo triggert Abruf beliebiger Secrets | Mittel | Repo deklariert nur Namen; Quelle (`cmd`, `interval`, statischer Wert) liegt ausschließlich in der vertrauenswürdigen User-Config (TB5/TB6) |
+| **I:** Host-Datei als Secret in der User-Config (`secrets:`-Map) | Kontextabhängig | Optionales Feature neben `secret_sources`: Repo-Scope bleibt unverändert (nur Namen); die Host-Datei wird per ro-bind auf `/run/secrets/<name>` gereicht, nie kopiert oder in Logs/Env geführt; Doppeldefinition in `secret_sources` und `secrets` wird hart abgelehnt (eindeutige Quelle). Bindung pinnt die Inode für die Sandbox-Laufzeit — Rotation erfordert hier `secret_sources` mit `interval`, dokumentiert in CONCEPT §4.7 |
 
 ### 5.4 Delegation / Host-Runner (Kanal C) — ⚠︎ kritischste TB
 

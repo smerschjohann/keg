@@ -842,3 +842,87 @@ network:
 		t.Errorf("EnvSet[%s] = %q, want %q", orchestrator.EnvProxyBridge, got, proxy.DefaultBridgeAddr)
 	}
 }
+
+// TestBuildRunPlan_Secrets_UserConfigHostFileMount pins that a repo secret
+// reference can be satisfied by an existing HOST FILE declared in the user
+// config's "secrets:" map: the file is bind-mounted read-only to
+// /run/secrets/<name> without any secret_sources command involved.
+func TestBuildRunPlan_Secrets_UserConfigHostFileMount(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "anthropic-key")
+	writeFile(t, keyFile, "sk-host-file")
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+secrets:
+  - name: anthropic_key
+    env: ANTHROPIC_KEY_FILE
+`)
+
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, `
+secrets:
+  anthropic_key: "`+keyFile+`"
+`)
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	want := []orchestrator.SecretBind{{HostPath: keyFile, GuestPath: "/run/secrets/anthropic_key"}}
+	if !reflect.DeepEqual(plan.SecretPathBinds, want) {
+		t.Errorf("SecretPathBinds = %+v, want %+v", plan.SecretPathBinds, want)
+	}
+	if plan.EnvSet["ANTHROPIC_KEY_FILE"] != "/run/secrets/anthropic_key" {
+		t.Errorf("ANTHROPIC_KEY_FILE env = %q, want /run/secrets/anthropic_key", plan.EnvSet["ANTHROPIC_KEY_FILE"])
+	}
+	// A pure path-mount needs no fetch: the instance secret dir stays unused.
+	if plan.SecretDir != "" {
+		t.Errorf("SecretDir = %q, want empty (nothing to fetch)", plan.SecretDir)
+	}
+}
+
+// TestBuildRunPlan_Secrets_HostFileMountExpandsTilde pins ~ expansion for
+// user-config secret paths.
+func TestBuildRunPlan_Secrets_HostFileMountExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	keyFile := filepath.Join(home, "api-key")
+	writeFile(t, keyFile, "tok")
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+secrets:
+  - name: api_token
+`)
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, "secrets:\n  api_token: \"~/api-key\"\n")
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	if len(plan.SecretPathBinds) != 1 || plan.SecretPathBinds[0].HostPath != keyFile {
+		t.Errorf("SecretPathBinds = %+v, want host path expanded to %q", plan.SecretPathBinds, keyFile)
+	}
+}
+
+// TestBuildRunPlan_Secrets_MissingEverywhereNamesBothOptions pins the
+// validation error when a repo secret is defined neither in secret_sources
+// nor in the user-config secrets map.
+func TestBuildRunPlan_Secrets_MissingEverywhereNamesBothOptions(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+secrets:
+  - name: missing_sec
+`)
+	_, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err == nil || !strings.Contains(err.Error(), "missing_sec") {
+		t.Fatalf("expected missing secret error naming missing_sec, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "secret_sources") || !strings.Contains(err.Error(), "secrets") {
+		t.Errorf("error must name both lookup places: %v", err)
+	}
+}

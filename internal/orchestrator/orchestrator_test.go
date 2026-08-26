@@ -641,3 +641,48 @@ env:
 		t.Errorf("plan.EnvSet[TEST_VAR] = %q, want fallback", plan.EnvSet["TEST_VAR"])
 	}
 }
+
+// TestBuildArgs_SecretPathBindsMountedOverSecretDir pins the mount order:
+// single-file secret binds must come AFTER the directory bind so they win.
+func TestBuildArgs_SecretPathBindsMountedOverSecretDir(t *testing.T) {
+	p := basePlan()
+	p.SecretDir = "/tmp/keg-i1/secrets"
+	p.SecretPathBinds = []SecretBind{{
+		HostPath:  "/host/keys/api-key",
+		GuestPath: "/run/secrets/api_key",
+	}}
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	dirIdx := slices.Index(args, "/run/secrets") // first hit = "--dir" value of dir bind
+	if dirIdx < 0 || args[dirIdx-1] != "--dir" {
+		t.Fatalf("expected --dir /run/secrets for the directory bind, got %v", args)
+	}
+	fileIdx := slices.Index(args, "/host/keys/api-key")
+	if fileIdx < 0 {
+		t.Fatalf("secret file not bound at all: %v", args)
+	}
+	if fileIdx < dirIdx+2 { // must follow the whole-directory ro-bind pair
+		t.Fatalf("file bind must come after directory bind: %v", args)
+	}
+}
+
+// TestBuildArgs_SecretPathBindsWithoutFetchedDir pins that path-mounted
+// secrets create /run/secrets themselves when nothing was fetched.
+func TestBuildArgs_SecretPathBindsWithoutFetchedDir(t *testing.T) {
+	p := basePlan()
+	p.SecretPathBinds = []SecretBind{{
+		HostPath:  "/host/keys/api-key",
+		GuestPath: "/run/secrets/api_key",
+	}}
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	for _, want := range []string{"--dir", "/run/secrets", "--ro-bind", "/host/keys/api-key", "/run/secrets/api_key"} {
+		if !slices.Contains(args, want) {
+			t.Errorf("args missing %q: %v", want, args)
+		}
+	}
+}

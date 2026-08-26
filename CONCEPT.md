@@ -420,6 +420,18 @@ dem Host**.
       on_refresh_error: keep   # keep = letzter guter Wert bleibt (Default)
                                # fail = Sandbox wird beendet
   ```
+  Alternativ (oder ergänzend) erlaubt die User-Config, **bestehende
+  Host-Dateien direkt als Secret bereitzustellen**:
+  ```yaml
+  secrets:
+    ai_token: "~/.config/ai/token"   # Host-Datei (ro-bind)
+  ```
+  Die Datei wird per `--ro-bind` auf `/run/secrets/<name>` gemountet —
+  kein Kopieren, kein Befehlsaufruf; `~`/`$VAR` werden expandiert.
+  Auflösung je Name: **genau eine** Quelle — ein Name darf nicht in
+  `secret_sources` UND `secrets` gleichzeitig existieren (harte Validierung,
+  sonst Mehrdeutigkeit bei Rotation). Path-Secrets werden nicht refresht;
+  die Bindung zeigt immer auf die aktuelle Datei.
 * **Repo-YAML** deklariert nur den *Bedarf* — welche Secrets die Sandbox
   braucht und ob zusätzlich eine Env-Var darauf zeigen soll:
   ```yaml
@@ -429,8 +441,9 @@ dem Host**.
       env: DB_PASSWORD_FILE  # setzt DB_PASSWORD_FILE=/run/secrets/db_password
                              # (kompatibel zum *_FILE-Konvent vieler Tools)
   ```
-  Referenzierte `name`s müssen in `secret_sources` existieren, sonst
-  harter Validierungsfehler vor Start.
+  Referenzierte `name`s müssen in `secret_sources` oder in der `secrets`
+  -Map (Host-Datei) der User-Config existieren, sonst harter Validierungsfehler
+  vor Start.
 
 #### Ablauf & Technik
 
@@ -548,6 +561,12 @@ secret_sources:
     interval: 5m          # Refresh-Intervall; fehlt = nur Initial-Fetch
     timeout: 10s
     on_refresh_error: keep   # keep (Default) | fail
+
+# Bestehende Host-Dateien als Secrets bereitstellen (§4.7): ro-bind auf
+# /run/secrets/<name>. Repo deklariert nur den Bedarf (`secrets:`);
+# Name darf nicht gleichzeitig in secret_sources existieren.
+secrets:
+  github_pat: "~/.config/gh/hosts.yml"
 
 # ── Pro Ziel-Repo: übersteuert den Global-Bereich selektiv ──────────────
 repos:

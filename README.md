@@ -252,6 +252,13 @@ secret_sources:
     timeout: 5s
     on_refresh_error: keep
 
+# Bestehende Host-Dateien als Secrets bereitstellen (ro-bind nach
+# /run/secrets/<name>; ~ und $VAR werden expandiert). Repo deklariert
+# den Bedarf per `secrets:` — dieselbe Datei kann so mehreren Sandboxes
+# bereitgestellt werden, ohne sie zu kopieren.
+secrets:
+  github_pat: "~/.config/gh/hosts.yml"
+
 # Sicherheits- und LSM-Einstellungen
 security:
   landlock: auto # auto | on | off

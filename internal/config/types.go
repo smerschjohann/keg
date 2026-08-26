@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -265,10 +266,15 @@ type User struct {
 	Security      Security                `yaml:"security"`
 	Log           LogCfg                  `yaml:"log"`
 	SecretSources map[string]SecretSource `yaml:"secret_sources"`
-	Mounts        []Mount                 `yaml:"mounts"`
-	Network       Network                 `yaml:"network"`
-	Env           EnvSpec                 `yaml:"env"`
-	Repos         map[string]RepoOverride `yaml:"repos"`
+	// Secrets maps secret names to existing HOST FILES: a repo may
+	// reference the name via its `secrets:` list and the file is mounted
+	// read-only at /run/secrets/<name>. Paths support ~ and $VAR expansion.
+	// A name must not also appear in secret_sources (exactly one origin).
+	Secrets map[string]string       `yaml:"secrets"`
+	Mounts  []Mount                 `yaml:"mounts"`
+	Network Network                 `yaml:"network"`
+	Env     EnvSpec                 `yaml:"env"`
+	Repos   map[string]RepoOverride `yaml:"repos"`
 }
 
 // ParseRepo decodes and validates a repo config from bytes (strict: unknown
@@ -382,6 +388,17 @@ func (r *Repo) validate() error {
 }
 
 func (u *User) validate() error {
+	for name, hostPath := range u.Secrets {
+		if name == "" {
+			return fmt.Errorf("user config: secrets: entry with empty name")
+		}
+		if strings.TrimSpace(hostPath) == "" {
+			return fmt.Errorf("user config: secrets[%s]: empty host path", name)
+		}
+		if _, clash := u.SecretSources[name]; clash {
+			return fmt.Errorf("user config: secret %q defined in both secret_sources and secrets (choose one origin)", name)
+		}
+	}
 	for name, src := range u.SecretSources {
 		switch src.OnRefreshError {
 		case "", "keep", "fail":

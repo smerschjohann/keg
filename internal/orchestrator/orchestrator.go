@@ -13,6 +13,12 @@ import (
 	"github.com/smerschjohann/keg/internal/portsfw"
 )
 
+// SecretBind is one existing host file exposed read-only in the sandbox.
+type SecretBind struct {
+	HostPath  string // absolute host path of the secret file
+	GuestPath string // /run/secrets/<name>
+}
+
 // FDProxy/FDDNS/FDRunner name the guest-side descriptors. bwrap (>= 0.11)
 // passes cmd.ExtraFiles through verbatim starting at fd 3 — there is no
 // --preserve-fds flag to request; inheritance is verified by
@@ -149,6 +155,10 @@ type Plan struct {
 	Secrets []config.SecretRef
 	// SecretSources defined in the user config.
 	SecretSources map[string]config.SecretSource
+	// SecretPathBinds mounts existing host files read-only as secrets when
+	// no dynamic source supplies them: user config `secrets:` maps
+	// <name> -> host file, mounted at /run/secrets/<name>.
+	SecretPathBinds []SecretBind
 
 	// Landlock controls Landlock LSM enforcement mode (auto | on | off).
 	Landlock string
@@ -298,7 +308,7 @@ func BuildArgs(p Plan) ([]string, error) {
 	}
 
 	// Runtime directories: /run tmpfs for delegation socket and secrets.
-	if p.EnableRunner || p.SecretDir != "" {
+	if p.EnableRunner || p.SecretDir != "" || len(p.SecretPathBinds) > 0 {
 		args = append(args, "--tmpfs", "/run")
 	}
 
@@ -306,6 +316,14 @@ func BuildArgs(p Plan) ([]string, error) {
 	// (CONCEPT.md §4.7).
 	if p.SecretDir != "" {
 		args = append(args, "--dir", "/run/secrets", "--ro-bind", p.SecretDir, "/run/secrets")
+	}
+	// Path-mounted secrets must come AFTER the directory bind: bwrap
+	// applies args sequentially and later binds shadow earlier ones.
+	if len(p.SecretPathBinds) > 0 && p.SecretDir == "" {
+		args = append(args, "--dir", "/run/secrets")
+	}
+	for _, b := range p.SecretPathBinds {
+		args = append(args, "--ro-bind", b.HostPath, b.GuestPath)
 	}
 
 	// Injected resolver configuration.
