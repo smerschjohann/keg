@@ -96,9 +96,41 @@ TB7: Host-Clients          ←→  Sandbox-Services        (Port-Rückkanal, nur
 | **S/I:** Umgehung der Domain-Whitelist | Kernbedrohung P1 | Nur Loopback im NS ⇒ physisch kein anderer Weg; Proxy lehnt unbekannte CONNECT-Targets mit 403 ab; DNS antwortet NXDOMAIN (Deny-by-default); Hosts-Mappings autoritativ vor Whitelist. **Update (M3):** Der DNS-Listener :53 läuft im keg-eigenen Wrapper-Netns (Stage-Prozess, außerhalb des bwrap-Baums); Queries werden gerahmt über fd4 zur hostseitigen Policy relayed — die private Netns hat keine Routen, der Workload kann den Kanal weder umgehen noch die Policy beeinflussen |
 | **I:** DNS-Tunneling zur Exfiltration | Mittel | Whitelist + NXDOMAIN; Tunneling über *erlaubte* Domains bleibt theoretisch möglich (Residualrisiko — detektierbar per Audit-Log-Volumen) |
 | **I:** DoH/DoT-Bypass | Niedrig | DoH-Endpunkte werden nicht whitelisted; ohne DNS landet der Bootstrap nicht einmal |
-| **T:** IP-Literal-Dial statt DNS | — | Scheitert an `--unshare-net` (kein Routing außer Loopback) |
+| **T:** IP-Literal-Dial statt DNS | — | Scheitert an `--unshare-net` (kein Routing außer Loopback). **Proxy-Modus:** IP-literale CONNECT-Ziele scheitern an der Domain-Whitelist. **Update (Transparent-Modus):** rohes TCP auf konfigurierte Ports läuft durch den Stage-Relay; die Entscheidung fällt hostseitig gegen die IP→Endpoint-Korrelation aus Kanal B — ohne korrelierten DNS-Answer wird die Verbindung geschlossen |
 | **D:** Stau am DNS-Socketpair → stille Drops | Niedrig | Queued Framing statt Drop (§4.4 Backpressure-Hinweis) |
 | **E:** Proxy-Redirect/Pivot (Sandbox nutzt Proxy als Sprungbrett zu Internem) | Mittel | Proxy dialt ausschließlich zum deklarierten Upstream/Firmen-Proxy; Zielprüfung vor Connect; kein generischer Forward |
+
+#### 5.2.1 Transparent-Modus (nftables REDIRECT + Stage-Relay) — Update M3-Umsetzung
+
+Im `network.mode: transparent` baut der keg-eigene Netns-Stage ein minimales
+Netz (Pod-IP auf lo, Default-Route via lo) und redirectet TCP auf konfigurierte
+Ports (:53 für UDP-DNS, :443 und `tcp_endpoints`-Ports für TCP) per nftables in
+einen lokalen Relay. Der Relay synthetisiert CONNECT-Requests über Kanal A;
+**alle Policy-Entscheidungen bleiben hostseitig**, die Stage hält keine Policy.
+Empirisch verifizierte Design-Punkte mit Sicherheitsrelevanz:
+
+* **Enforcement liegt im postrouting-Hook,** nicht im Output-Filter: nftables
+  reroutet redirectete Pakete erst nach allen Output-Hooks — ein dortiger
+  Default-Drop würde jeden Flow killen (empirisch). Postrouting sieht übersetzte
+  Ziele: Nicht-Loopback-Ziele werden gedroppt, `ct state established,related`
+  lässt ausschließlich Antworten bereits inspizierter Flows passieren. Neue
+  Flows zu nicht redirecteten Ports/Protokollen sind damit unmöglich
+  (Deny-by-default bleibt intakt; gepinnt durch `TestRulesetReader_RedirectsAndEnforcement`).
+* **SO_ORIGINAL_DST statt fixer Zielannahme:** Der Relay liest die Pre-NAT-
+  Destination aus dem Conntrack des Sockets. Die Workload kann Conntrack-
+  Metadaten nicht manipulieren (keine Caps, eigener UserNS); fehlsame/unpassende
+  Angaben ⇒ fail-closed (Verbindung zu).
+* **IP→Endpoint-Korrelation:** Nur A-Antworten erlaubter Namen füllen die
+  Tabelle (Kanal-B-Forwarding-Pfad); Einträge sind Port-gepinnt und laufen nach
+  `DefaultRawCorrelationTTL` (30 s) ab — eine Wiederverwendung einer IP durch
+  einen anderen Namen/Nutzer erbt keine Berechtigung (`TestRawEndpoints_TTLExpiry`).
+* **SNI-Pfad fail-closed:** TLS ohne parsebaren ClientHello/SNI (inkl. künftiger
+  ECH-Handshakes) wird geschlossen und fällt nie in den Raw-Pfad zurück;
+  SNI-Policy bleibt bewusst Single-Level, DNS-Zonen-Semantik ist getrennt
+  (M3-Notiz 5).
+* **Quelladresswahl:** Der Stage pinnt die Host-Egress-IPv4 auf loopback; ohne
+  gültige Quelle bliebe jede Verbindung bei 0.0.0.0 hängen — das ist
+  Fail-Closed-Verhalten, kein Kanal entsteht.
 
 ### 5.3 Secret-Bind (§4.7)
 

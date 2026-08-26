@@ -5,7 +5,7 @@
 > Arbeitsregeln für Coding-Agents: `AGENTS.md`.
 >
 > **Status-Tracker:** Jeder WP-Kopf trägt seinen Umsetzungsstand.
-> Stand: **Phase 0 + M1–M3 vollständig, M4 teilweise, Transparent-Modus angelegt** (Details je Abschnitt),
+> Stand: **Phase 0 + M1–M3 vollständig (inkl. Transparent-Modus), M4 teilweise** (Details je Abschnitt),
 > jeweiligen Abschnitten. Abweichungen vom Originalplan sind als
 > *Umsetzungsnotiz* dokumentiert (warum/wie wurde abgewichen).
 
@@ -361,26 +361,60 @@ Namespace); Deny-by-default per NXDOMAIN; Whitelist geteilt mit Kanal A
 
 ### 5.1 Transparent-Modus & tcp_endpoints (M3-Fortschreibung)
 
-**Status:** 🔶 Kern implementiert, End-to-End offen.
+**Status:** ✅ erledigt — SNI-Splicing und rohes TCP-Passthrough laufen
+End-to-End gegen echte nftables/Conntrack (Integrationstests grün).
 
 * `network.mode: transparent` — für Proxy-ignorierende Workloads:
-  Stage baut minimales Netz (Default-Route via lo), nftables OUTPUT
-  redirectet TCP auf konfigurierte Ports zu einem SNI-/Raw-Relay in der
-  Stage; Policy bleibt vollständig hostseitig.
+  Stage baut minimales Netz (Pod-IP auf lo, Default-Route via lo), nftables
+  redirectet TCP auf konfigurierte Ports zu einem Relay in der Stage;
+  Policy bleibt vollständig hostseitig.
 * **Zwei getrennte Policy-Mechanismen**, in der Config am Feldnamen
   unterscheidbar:
   * `sni_domains`: name-basiert, TLS :443 (SNI-Peek, kein MITM; ECH ⇒
-    fail-closed);
+    fail-closed); bewusst Single-Level-Matching (M3-Notiz 5);
   * `tcp_endpoints` (`host` + `ports[]`): rohes TCP via DNS-Korrelation —
     der Resolver merkt sich forwarded A-Antworten erlaubter Namen in einer
-    IP→Endpoint-Tabelle; der Proxy prüft IP-literale CONNECT-Ziele dagegen
-    (`RawTargetCheck`, inkl. Port-Pinning).
+    IP→Endpoint-Tabelle (TTL: `DefaultRawCorrelationTTL`, 30 s); der Proxy
+    prüft IP-literale CONNECT-Ziele dagegen (`RawTargetCheck`, inkl.
+    Port-Pinning).
 * Upstream-Dial weiterhin hostseitig ⇒ keine Loop-Gefahr, FQDNNetworkPolicy-
   Semantik im Pod-Netz bleibt unberührt.
+* Verdrahtung: `tcp_endpoints`-Hosts joinen die DNS-Whitelist und aktivieren
+  Kanal B; Kanal A startet bei `sni_domains` **oder** `tcp_endpoints`
+  (`TestBuildRunPlan_TCPEndpointsJoinDNSWhitelist`).
 
-**Offen:** SO_ORIGINAL_DST im Relay (aktuell fixe Zielannahme), Raw-Pfad-
-Integrationstest (Fake-TCP-Echo + `/dev/tcp`), TTL-Ablauf der Korrelation,
-Doku THREAT_MODEL §2.3/§5.2.
+**Tests:** `TestSandboxRawTCPPassthrough` (Fake-Upstream-DNS + Echo-Origin +
+`/dev/tcp`: Redirect → SO_ORIGINAL_DST → CONNECT → Korrelation → Tunnel;
+unkorrelierte IP auf demselben Port wird verweigert);
+`TestSandboxTransparentMode` (echtes Cluster-Endpoint über gesplictes SNI-TLS,
+keine Proxy-Vars, Deny für Nicht-Whitelisted);
+`TestRelay_*` (Relay-Dispatch mit injizierter Original-Destination,
+Fail-Closed-Fälle);
+`TestRulesetReader_RedirectsAndEnforcement` (Regelsatz-Form gepinnt);
+`TestRawEndpoints_*` (Korrelation, TTL, Port-Pinning).
+
+#### Umsetzungsnotizen Transparent-Modus (empirisch verifiziert)
+
+1. **Output-Hook-Falle:** Ein Default-Drop als Output-Filterkette killt jeden
+   Flow: nftables reroutet redirectete Pakete erst NACH allen Output-Hooks —
+   die Filterkette sieht die Pre-NAT-Zieladresse (und auch noch nicht gesetzte
+   Marks). Enforcement liegt daher im **postrouting**: dort ist die übersetzte
+   Adresse sichtbar; `ct state established,related` lässt ausschließlich
+   Antworten inspizierter Flows passieren, alles Neue zu fremden Zielen wird
+   gedroppt.
+2. **Quelladresswahl:** Im privaten Netns existiert die Pod-IP nicht — connect()
+   wählt 0.0.0.0 als Quelle und Relay-Antworten finden den Client-Socket nie
+   (Blackhole). Der Stage pinnt deshalb die Host-Egress-IPv4 (`OutboundIPv4`,
+   reiner Route-Lookup ohne Paketversand) per `ip addr add …/32 dev lo`.
+3. **SO_ORIGINAL_DST funktioniert unter nftables REDIRECT** wie unter iptables:
+   getsockopt(SOL_IP, 80) liefert Pre-NAT-IP+Port; Parser verwirft Müll
+   (falsche Family, Nulladresse/-Port) ⇒ fail-closed statt implizitem Allow.
+4. **Dispatch im Relay:** Erstes Peek-Byte entscheidet — 0x16 ⇒ TLS-Pfad
+   (ClientHello akkumulieren, SNI oder Ende); jedes andere Byte ⇒ Raw-Pfad
+   zur Pre-NAT-Zieladresse. Ohne wiederherstellbare Original-Destination wird
+   geschlossen (fail-closed, keine fixe Zielannahme mehr).
+5. **Deny-Erkennung im Test:** `head -c N` exit-t bei sofortigem EOF mit 0 —
+   Deny-Fälle prüfen den gelesenen Output, nicht den Exit-Code.
 
 **Umsetzungsnotizen (empirisch):** bwrap leert das Capability-Bounding-Set
 (:53/:443 nie bindbar aus dem Sandbox-Baum); glibc kennt keine Portsyntax
@@ -611,8 +645,9 @@ kontrolliertem Egress. Nach **M5** vollständig für den Bestands-Workflow
 nutzbar. Jeder WP ist unabhängig merge-bar; Breaking Changes an der Config
 nur bis M4 (danach Versionierung `version: "1"` ernst nehmen).
 
-**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (+ Transparent-
-Modus/tcp_endpoints 🔶) · **M4** 🔶 (§6.1 erledigt).
+**Aktueller Stand:** Phase 0 ✅ · M1 ✅ · M2 ✅ · M3 ✅ (inkl. Transparent-
+Modus/tcp_endpoints ✅) · **M4** 🔶 (§6.1 erledigt).
 Erster nutzbarer Schnitt: isolierte Shell mit Overlay-Modi, kontrolliertem
 HTTP(S)-Egress (Kanal A) und echtem whitelist-filternden DNS auf :53
-(Kanal B) inklusive cluster.local-Auflösung über kube-dns.
+(Kanal B) inklusive cluster.local-Auflösung über kube-dns — wahlweise im
+Proxy- oder Transparent-Modus (rohes TCP via DNS-Korrelation).
