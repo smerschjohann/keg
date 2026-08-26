@@ -7,3 +7,5 @@ require (
 	github.com/urfave/cli/v3 v3.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+require golang.ngrok.com/muxado v1.0.0
