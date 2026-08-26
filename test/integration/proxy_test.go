@@ -12,7 +12,7 @@ import (
 const proxyRepoConfig = `
 version: "1"
 network:
-  allowed_domains:
+  sni_domains:
     - proxy.golang.org
 `
 
@@ -38,7 +38,7 @@ func TestSandboxProxyChannelDenied(t *testing.T) {
 			for k, v := range orchestrator.ProxyEnv([]string{"proxy.golang.org"}) {
 				plan.EnvSet[k] = v
 			}
-			plan.EgressWhitelist = []string{"proxy.golang.org"}
+			plan.SNIDomains = []string{"proxy.golang.org"}
 		},
 		func(sb *orchestrator.Sandbox) {
 			err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{

@@ -11,7 +11,7 @@ version: "1"
 templates:
   - go
 network:
-  allowed_domains:
+  sni_domains:
     - proxy.golang.org
 `
 
@@ -26,7 +26,7 @@ func TestParseRepo_MinimalValid(t *testing.T) {
 	if len(repo.Templates) != 1 || repo.Templates[0] != "go" {
 		t.Errorf("templates = %v, want [go]", repo.Templates)
 	}
-	domains := repo.Network.AllowedDomains
+	domains := repo.Network.SNIDomains
 	if len(domains) != 1 || domains[0] != "proxy.golang.org" {
 		t.Errorf("allowed_domains = %v", domains)
 	}
@@ -75,7 +75,7 @@ func TestParseRepo_ValidationErrors(t *testing.T) {
 	}{
 		{
 			name:     "missing version",
-			yamlText: "network:\n  allowed_domains: [a]\n",
+			yamlText: "network:\n  sni_domains: [a]\n",
 			wantErr:  "version",
 		},
 		{

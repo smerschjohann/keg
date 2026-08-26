@@ -12,7 +12,7 @@ import (
 const dnsRepoConfig = `
 version: "1"
 network:
-  allowed_domains:
+  sni_domains:
     - "*.svc.cluster.local"
     - "cluster.local"
 `
@@ -52,7 +52,7 @@ if getent hosts blocked.invalid >/dev/null 2>&1; then echo deny-failed; else ech
 			}
 			plan.ResolvConf = writeTempFile(t, "resolv.conf",
 				"nameserver 127.0.0.1\noptions timeout:1 retries:1\n")
-			plan.EgressWhitelist = []string{"*.svc.cluster.local", "cluster.local"}
+			plan.SNIDomains = []string{"*.svc.cluster.local", "cluster.local"}
 			plan.EgressDNS = &orchestrator.DNSConfig{
 				Whitelist: []string{"*.svc.cluster.local", "cluster.local"},
 				Upstream:  upstream,

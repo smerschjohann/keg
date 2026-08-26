@@ -75,9 +75,10 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		BwrapArgs:   repo.BwrapArgs,
 		AllowWeakBwrap: effective.Security.AllowWeakBwrap != nil &&
 			*effective.Security.AllowWeakBwrap,
-		Overlay:         overlay,
-		EgressWhitelist: repo.Network.AllowedDomains,
-		Transparent:     repo.Network.Mode == "transparent",
+		Overlay:      overlay,
+		SNIDomains:   repo.Network.SNIDomains,
+		TCPEndpoints: repo.Network.TCPEndpoints,
+		Transparent:  repo.Network.Mode == "transparent",
 	}
 	for k, v := range repo.Env.Set {
 		plan.EnvSet[k] = v
@@ -85,7 +86,7 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	// Explicit-proxy vars only make sense in proxy mode; transparent mode
 	// intercepts at the network layer instead.
 	if repo.Network.Mode != "transparent" {
-		for k, v := range orchestrator.ProxyEnv(repo.Network.AllowedDomains) {
+		for k, v := range orchestrator.ProxyEnv(repo.Network.SNIDomains) {
 			plan.EnvSet[k] = v
 		}
 	}
@@ -94,7 +95,7 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 	// (allowed_domains, explicit enable or hosts mappings). Filtered DNS
 	// without proxy makes no sense and vice versa — the resolver shares
 	// the whitelist (CONCEPT.md §4.4).
-	if len(repo.Network.AllowedDomains) > 0 ||
+	if len(repo.Network.SNIDomains) > 0 ||
 		repo.Network.DNS.Enabled || len(repo.Network.DNS.Hosts) > 0 {
 		// The netns stage serves the filtering resolver on loopback :53
 		// inside the sandbox namespace, so the classic resolv.conf works
@@ -115,7 +116,7 @@ func buildRunPlan(repoDir, repoCfgPath, userCfgPath string, overlay orchestrator
 		}
 		plan.EgressDNS = &orchestrator.DNSConfig{
 			Hosts:     repo.Network.DNS.Hosts,
-			Whitelist: repo.Network.AllowedDomains,
+			Whitelist: repo.Network.SNIDomains,
 			Upstream:  upstream,
 		}
 		hostsPath := filepath.Join(plan.TmpDir, "hosts")
@@ -231,9 +232,9 @@ func runAction(ctx context.Context, c *cliCommand) error {
 			fmt.Fprintf(os.Stderr, "keg: egress dns: %v\n", err)
 		}
 	}
-	if len(plan.EgressWhitelist) > 0 {
+	if len(plan.SNIDomains) > 0 {
 		err := sb.StartEgressProxy(orchestrator.EgressProxyConfig{
-			Whitelist:     plan.EgressWhitelist,
+			Whitelist:     plan.SNIDomains,
 			UpstreamProxy: upstreamProxyFromEnv(os.Getenv),
 		})
 		if err != nil {

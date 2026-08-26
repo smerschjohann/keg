@@ -95,9 +95,12 @@ type Plan struct {
 	DiskLayerRW   string // host dir with upper layer (OverlayDisk)
 	DiskLayerWork string // host dir with work layer (OverlayDisk)
 
-	// EgressWhitelist carries the repo's network.allowed_domains for the
-	// host-side proxy server; empty disables channel A entirely.
-	EgressWhitelist []string
+	// SNIDomains carries the repo's network.sni_domains (name-based policy
+	// for CONNECT/SNI traffic); empty disables that policy path.
+	SNIDomains []string
+	// TCPEndpoints carries network.tcp_endpoints for IP/port-based raw-TCP
+	// policy via DNS correlation.
+	TCPEndpoints []config.TCPEndpoint
 	// EgressDNS carries channel-B policy; nil disables the DNS channel.
 	EgressDNS *DNSConfig
 	// Transparent enables the nftables-backed transparent TCP relay in the

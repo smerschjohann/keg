@@ -13,7 +13,7 @@ const transparentRepoConfig = `
 version: "1"
 network:
   mode: transparent
-  allowed_domains:
+  sni_domains:
     - "*.svc.cluster.local"
     - "cluster.local"
 `
@@ -42,7 +42,7 @@ if curl --cacert /run/ca/ca.crt --max-time 5 -sf https://evil.invalid/version >/
 			plan.ResolvConf = writeTempFile(t, "resolv.conf",
 				"nameserver 127.0.0.1\noptions timeout:1 retries:1\n")
 			zones := []string{"*.svc.cluster.local", "cluster.local"}
-			plan.EgressWhitelist = zones
+			plan.SNIDomains = zones
 			plan.EgressDNS = &orchestrator.DNSConfig{Whitelist: zones}
 			_ = caData
 			plan.Mounts = append(plan.Mounts, mountFile(caPath, "/run/ca/ca.crt"))

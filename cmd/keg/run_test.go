@@ -18,7 +18,7 @@ env:
   unset:
     - AWS_SESSION_TOKEN
 network:
-  allowed_domains:
+  sni_domains:
     - proxy.golang.org
 `
 
@@ -77,7 +77,7 @@ func TestBuildRunPlan_ProxyEnvInjected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
-	// The fixture declares allowed_domains: the plan must carry the full
+	// The fixture declares sni_domains: the plan must carry the full
 	// loopback proxy environment plus the whitelist for the host server.
 	if got := plan.EnvSet[orchestrator.EnvProxyBridge]; got != proxy.DefaultBridgeAddr {
 		t.Errorf("EnvSet[%s] = %q, want %q", orchestrator.EnvProxyBridge, got, proxy.DefaultBridgeAddr)
@@ -86,8 +86,8 @@ func TestBuildRunPlan_ProxyEnvInjected(t *testing.T) {
 	if plan.EnvSet["HTTPS_PROXY"] != url {
 		t.Errorf("EnvSet[HTTPS_PROXY] = %q, want %q", plan.EnvSet["HTTPS_PROXY"], url)
 	}
-	if strings.Join(plan.EgressWhitelist, ",") != "proxy.golang.org" {
-		t.Errorf("EgressWhitelist = %v, want [proxy.golang.org]", plan.EgressWhitelist)
+	if strings.Join(plan.SNIDomains, ",") != "proxy.golang.org" {
+		t.Errorf("EgressWhitelist = %v, want [proxy.golang.org]", plan.SNIDomains)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestBuildRunPlan_NoWhitelistNoProxyEnv(t *testing.T) {
 	if _, ok := plan.EnvSet[orchestrator.EnvProxyBridge]; ok {
 		t.Errorf("proxy marker set without whitelist: %v", plan.EnvSet)
 	}
-	if len(plan.EgressWhitelist) != 0 {
-		t.Errorf("EgressWhitelist = %v, want empty", plan.EgressWhitelist)
+	if len(plan.SNIDomains) != 0 {
+		t.Errorf("EgressWhitelist = %v, want empty", plan.SNIDomains)
 	}
 }
 
@@ -216,7 +216,7 @@ func TestUpstreamProxyFromEnv(t *testing.T) {
 const dnsFixtureYAML = `
 version: "1"
 network:
-  allowed_domains:
+  sni_domains:
     - proxy.golang.org
   dns:
     upstream: "10.0.0.1:5353"
@@ -347,7 +347,7 @@ func TestBuildRunPlan_TransparentSkipsProxyVars(t *testing.T) {
 version: "1"
 network:
   mode: transparent
-  allowed_domains:
+  sni_domains:
     - "*.svc.cluster.local"
 `)
 	plan, err := buildRunPlan(dir, "", "", orchestrator.OverlayPlain, "")

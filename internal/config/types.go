@@ -120,11 +120,21 @@ func (p *PortSpec) UnmarshalYAML(value *yaml.Node) error {
 
 // Network configures egress policy.
 type Network struct {
-	Mode           string               `yaml:"mode"` // "" | "proxy" | "transparent"
-	Isolated       *bool                `yaml:"isolated"`
-	AllowedDomains []string             `yaml:"allowed_domains"`
-	DNS            DNS                  `yaml:"dns"`
-	AllowedPorts   []AllowedTCPEndpoint `yaml:"allowed_endpoints"`
+	Mode string `yaml:"mode"` // "" | "proxy" | "transparent"
+	DNS  DNS    `yaml:"dns"`
+	// SNIDomains: name-based policy — CONNECT (proxy mode) resp. TLS SNI
+	// (transparent mode, TCP/443 only).
+	SNIDomains []string `yaml:"sni_domains"`
+	// TCPEndpoints: IP/port-based policy for raw TCP via nftables REDIRECT
+	// + DNS-correlation (transparent mode only); e.g. database connections.
+	TCPEndpoints []TCPEndpoint `yaml:"tcp_endpoints"`
+}
+
+// TCPEndpoint whitelists one raw-TCP destination by name (resolved via the
+// keg resolver, correlated to IPs) and pinned ports.
+type TCPEndpoint struct {
+	Host  string `yaml:"host"`
+	Ports []int  `yaml:"ports"`
 }
 
 // AllowedTCPEndpoint whitelists a raw TCP target ("host:port").
@@ -336,6 +346,19 @@ func (r *Repo) validate() error {
 	case "", "proxy", "transparent":
 	default:
 		return fmt.Errorf("repo config: network.mode must be proxy|transparent")
+	}
+	for i, ep := range r.Network.TCPEndpoints {
+		if ep.Host == "" {
+			return fmt.Errorf("repo config: network.tcp_endpoints[%d]: host required", i)
+		}
+		if len(ep.Ports) == 0 {
+			return fmt.Errorf("repo config: network.tcp_endpoints[%d] (%s): at least one port required", i, ep.Host)
+		}
+		for _, port := range ep.Ports {
+			if port <= 0 || port > 65535 {
+				return fmt.Errorf("repo config: network.tcp_endpoints[%d]: invalid port %d", i, port)
+			}
+		}
 	}
 	for name, src := range r.Network.DNS.Hosts {
 		if src == "" {
