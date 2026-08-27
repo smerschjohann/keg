@@ -72,9 +72,14 @@ func (s *Sandbox) Channel(guestFD int) *os.File {
 // Each accepted connection is tunneled over channel E to the sandbox
 // loopback target. Resources are released by Sandbox.Close.
 func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
-	if s.IsClosed() {
+	s.closeMu.Lock()
+	if s.closed || s.portsStarted {
+		s.closeMu.Unlock()
 		return nil
 	}
+	s.portsStarted = true
+	s.closeMu.Unlock()
+
 	file := s.Channel(FDPorts)
 	if file == nil {
 		if s.IsClosed() {
@@ -116,9 +121,17 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 // sandbox exits (closing the host end terminates Serve). The workload can
 // use it immediately after Launch returns.
 func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
-	if s.IsClosed() {
+	s.closeMu.Lock()
+	if cfg.Audit != nil {
+		s.proxyAudit = cfg.Audit
+	}
+	if s.closed || s.proxyStarted {
+		s.closeMu.Unlock()
 		return nil
 	}
+	s.proxyStarted = true
+	s.closeMu.Unlock()
+
 	file := s.Channel(FDProxy)
 	if file == nil {
 		if s.IsClosed() {
@@ -126,16 +139,20 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 		}
 		return fmt.Errorf("egress proxy: channel fd %d not available", FDProxy)
 	}
-	audit := cfg.Audit
-	rawTable := s.raw
 	server := proxy.Server{
 		SNIDomains:    cfg.SNIDomains,
 		UpstreamProxy: cfg.UpstreamProxy,
 		DialTimeout:   0,
 		RawTargetCheck: func(hostPort string) bool {
-			return rawTable != nil && rawTable.check(hostPort)
+			s.closeMu.Lock()
+			raw := s.raw
+			s.closeMu.Unlock()
+			return raw != nil && raw.check(hostPort)
 		},
 		Audit: func(ev proxy.AuditEvent) {
+			s.closeMu.Lock()
+			audit := s.proxyAudit
+			s.closeMu.Unlock()
 			if audit != nil {
 				w := bufio.NewWriter(audit)
 				_, _ = fmt.Fprintln(w, proxy.FormatAudit(ev.Allowed, ev.Host))
@@ -152,9 +169,17 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 // sandbox exits. The :53 listener lives in the netns stage; this host side
 // applies policy and reaches the upstream with real network access.
 func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) error {
-	if s.IsClosed() {
+	s.closeMu.Lock()
+	if cfg.Audit != nil {
+		s.dnsAudit = cfg.Audit
+	}
+	if s.closed || s.dnsStarted {
+		s.closeMu.Unlock()
 		return nil
 	}
+	s.dnsStarted = true
+	s.closeMu.Unlock()
+
 	file := s.Channel(FDDNS)
 	if file == nil {
 		if s.IsClosed() {
@@ -163,15 +188,20 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 		return fmt.Errorf("egress dns: channel fd %d not available", FDDNS)
 	}
 	table := newRawEndpoints()
+	s.closeMu.Lock()
 	s.raw = table
 	s.rawCfg = rawCfg{DNSConfig: cfg, Endpoints: endpoints}
+	s.closeMu.Unlock()
 	resolver := &dns.Resolver{
 		Hosts:     cfg.Hosts,
 		Whitelist: cfg.Whitelist,
 		Upstream:  cfg.Upstream,
 		Audit: func(allowed bool, name string) {
-			if cfg.Audit != nil {
-				w := bufio.NewWriter(cfg.Audit)
+			s.closeMu.Lock()
+			audit := s.dnsAudit
+			s.closeMu.Unlock()
+			if audit != nil {
+				w := bufio.NewWriter(audit)
 				verdict := "ERLAUBT"
 				if !allowed {
 					verdict = "BLOCKIERT"
@@ -182,7 +212,10 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 			slog.Info("egress dns decision", "allowed", allowed, "name", name)
 		},
 		OnA: func(name string, ips []net.IP) {
-			for _, ep := range s.rawCfg.Endpoints {
+			s.closeMu.Lock()
+			eps := s.rawCfg.Endpoints
+			s.closeMu.Unlock()
+			for _, ep := range eps {
 				if name == strings.ToLower(ep.Host) || strings.HasSuffix(name, "."+strings.ToLower(ep.Host)) {
 					table.allow(ep.Host, ips, ep.Ports, DefaultRawCorrelationTTL)
 				}
@@ -198,9 +231,17 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 // all running jobs). The engine was validated before Launch; whitelisted
 // jobs run in the repo root with the host user's environment.
 func (s *Sandbox) StartRunner(cfg runner.ServerConfig) error {
-	if s.IsClosed() {
+	s.closeMu.Lock()
+	if cfg.Audit != nil {
+		s.runnerAudit = cfg.Audit
+	}
+	if s.closed || s.runnerStarted {
+		s.closeMu.Unlock()
 		return nil
 	}
+	s.runnerStarted = true
+	s.closeMu.Unlock()
+
 	file := s.Channel(FDRunner)
 	if file == nil {
 		if s.IsClosed() {
@@ -210,7 +251,12 @@ func (s *Sandbox) StartRunner(cfg runner.ServerConfig) error {
 	}
 	origAudit := cfg.Audit
 	cfg.Audit = func(allowed bool, task string, reason string) {
-		if origAudit != nil {
+		s.closeMu.Lock()
+		audit := s.runnerAudit
+		s.closeMu.Unlock()
+		if audit != nil {
+			audit(allowed, task, reason)
+		} else if origAudit != nil {
 			origAudit(allowed, task, reason)
 		}
 		slog.Info("delegation decision", "allowed", allowed, "task", task, "reason", reason)

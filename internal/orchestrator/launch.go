@@ -37,6 +37,16 @@ type Sandbox struct {
 
 	raw    *rawEndpoints // ip->endpoint correlation (transparent mode)
 	rawCfg rawCfg
+
+	dnsStarted     bool
+	proxyStarted   bool
+	portsStarted   bool
+	runnerStarted  bool
+	secretsStarted bool
+
+	dnsAudit    io.Writer
+	proxyAudit  io.Writer
+	runnerAudit func(allowed bool, task string, reason string)
 }
 
 type waitResult struct {
@@ -337,6 +347,18 @@ func start(ctx context.Context, bin string, args []string, p Plan, seccompFile *
 		res.stderr = errBuf.String()
 		sb.waitCh <- res
 	}()
+
+	// Start background services (DNS, proxy, port forwarding, runner, async secrets)
+	// immediately upon process start so that guest network traffic and async secret
+	// fetching run in parallel from millisecond 0 without startup delay.
+	if err := StartBackgroundServices(ctx, sb, p, nil, p.AuditWriter); err != nil {
+		sb.Close()
+		if sb.cmd.Process != nil {
+			_ = sb.cmd.Process.Kill()
+		}
+		return nil, fmt.Errorf("start background services: %w", err)
+	}
+
 	return sb, nil
 }
 

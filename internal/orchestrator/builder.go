@@ -173,6 +173,7 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	if plan.Seccomp == "" {
 		plan.Seccomp = "auto"
 	}
+	plan.UpstreamProxy = UpstreamProxyFromEnv(os.Getenv)
 	plan.EnvSet[EnvLandlock] = plan.Landlock
 	for k, v := range mergedEnv.Set {
 		plan.EnvSet[k] = v
@@ -418,6 +419,7 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	tasks.Raw = append(tasks.Raw, effective.Runner.ExtraRaw...)
 	if len(tasks.Exact) > 0 || len(tasks.Prefixes) > 0 || len(tasks.Raw) > 0 {
 		plan.DelegatedTasks = tasks
+		plan.UserRunnerCfg = effective.Runner
 		plan.EnableRunner = true
 		plan.EnvSet[EnvDelegation] = "1"
 		hooksDir := filepath.Join(instanceDir, "hooks")
@@ -468,11 +470,16 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 		return nil
 	}
 
+	aw := auditWriter
+	if aw == nil {
+		aw = plan.AuditWriter
+	}
+
 	// DNS channel
 	if plan.EgressDNS != nil {
 		dnsCfg := *plan.EgressDNS
-		if auditWriter != nil {
-			dnsCfg.Audit = auditWriter
+		if aw != nil {
+			dnsCfg.Audit = aw
 		}
 		if err := sb.StartEgressDNS(dnsCfg, plan.TCPEndpoints); err != nil {
 			return fmt.Errorf("start egress dns: %w", err)
@@ -481,13 +488,13 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 
 	// Proxy channel
 	if len(plan.SNIDomains) > 0 || len(plan.TCPEndpoints) > 0 {
-		proxyAudit := auditWriter
+		proxyAudit := aw
 		if proxyAudit == nil {
 			proxyAudit = os.Stderr
 		}
 		err := sb.StartEgressProxy(EgressProxyConfig{
 			SNIDomains:    plan.SNIDomains,
-			UpstreamProxy: UpstreamProxyFromEnv(os.Getenv),
+			UpstreamProxy: plan.UpstreamProxy,
 			Audit:         proxyAudit,
 		})
 		if err != nil {
@@ -503,9 +510,9 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 	}
 
 	// Delegation runner channel
-	if plan.EnableRunner {
-		var runnerCfg config.RunnerCfg
-		if user != nil {
+	if plan.EnableRunner && (len(plan.DelegatedTasks.Exact) > 0 || len(plan.DelegatedTasks.Prefixes) > 0 || len(plan.DelegatedTasks.Raw) > 0) {
+		runnerCfg := plan.UserRunnerCfg
+		if user != nil && (user.Runner.JustBin != "" || len(user.Runner.ExtraExact) > 0 || len(user.Runner.ExtraPrefixes) > 0 || len(user.Runner.ExtraRaw) > 0) {
 			runnerCfg = user.Runner
 		}
 		engine, engineErr := runner.NewEngine(plan.DelegatedTasks, runnerCfg)
@@ -524,9 +531,9 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 				return trust.VerifyApproved("", plan.RepoRoot, runnerCfgPath)
 			},
 		}
-		if auditWriter != nil {
+		if aw != nil {
 			serverCfg.Audit = func(allowed bool, task string, reason string) {
-				w := bufio.NewWriter(auditWriter)
+				w := bufio.NewWriter(aw)
 				verdict := "ERLAUBT"
 				if !allowed {
 					verdict = "BLOCKIERT"
@@ -546,18 +553,25 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 
 	// Secret background refresher
 	if len(plan.SecretDir) > 0 && len(plan.Secrets) > 0 {
-		refresher := secrets.NewRefresher()
-		go refresher.Start(ctx, plan.Secrets, plan.SecretSources, plan.SecretDir, func(name, status string) {
-			if auditWriter != nil {
-				w := bufio.NewWriter(auditWriter)
-				_, _ = fmt.Fprintf(w, "SECRET %s %s\n", name, status)
-				_ = w.Flush()
-			}
-			slog.Info("secret refresh", "name", name, "status", status)
-		}, func(err error) {
-			slog.Error("secret refresh fatal error", "err", err)
-			_ = sb.Signal(syscall.SIGTERM)
-		}, plan.SecretTemplateCtx)
+		sb.closeMu.Lock()
+		if !sb.secretsStarted {
+			sb.secretsStarted = true
+			sb.closeMu.Unlock()
+			refresher := secrets.NewRefresher()
+			go refresher.Start(ctx, plan.Secrets, plan.SecretSources, plan.SecretDir, func(name, status string) {
+				if aw != nil {
+					w := bufio.NewWriter(aw)
+					_, _ = fmt.Fprintf(w, "SECRET %s %s\n", name, status)
+					_ = w.Flush()
+				}
+				slog.Info("secret refresh", "name", name, "status", status)
+			}, func(err error) {
+				slog.Error("secret refresh fatal error", "err", err)
+				_ = sb.Signal(syscall.SIGTERM)
+			}, plan.SecretTemplateCtx)
+		} else {
+			sb.closeMu.Unlock()
+		}
 	}
 
 	return nil

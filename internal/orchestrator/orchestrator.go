@@ -157,6 +157,8 @@ type Plan struct {
 	// DelegatedTasks carries the repo delegation whitelist (Kanal C).
 	// Empty disables the runner channel entirely.
 	DelegatedTasks config.DelegatedTasks
+	// UserRunnerCfg carries runner settings from user configuration.
+	UserRunnerCfg config.RunnerCfg
 	// HooksDir is an empty, keg-owned directory used to suppress git
 	// hooks in delegated jobs (THREAT_MODEL §5.4). Empty = no suppression.
 	HooksDir string
@@ -173,6 +175,8 @@ type Plan struct {
 	AuditFile string
 	// AuditWriter optionally receives audit decision lines from egress and runner channels.
 	AuditWriter io.Writer
+	// UpstreamProxy carries host:port of upstream corporate proxy ("" = direct).
+	UpstreamProxy string
 
 	// Secrets requested by the repository.
 	Secrets []config.SecretRef

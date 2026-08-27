@@ -244,6 +244,7 @@ func Launch(ctx context.Context, repoRoot string, opts ...Option) (*Sandbox, err
 		inst = filepath.Base(plan.RepoRoot)
 	}
 	auditLogger := orchestrator.NewAuditLogger(auditFileWriter, nil, inst)
+	plan.AuditWriter = auditLogger
 
 	sb, err := orchestrator.Launch(launchCtx, plan)
 	if err != nil {

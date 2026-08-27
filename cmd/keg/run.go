@@ -197,6 +197,7 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		inst = filepath.Base(plan.RepoRoot)
 	}
 	auditLogger := orchestrator.NewAuditLogger(auditFileWriter, verboseWriter, inst)
+	plan.AuditWriter = auditLogger
 
 	sb, err := orchestrator.Launch(ctx, plan)
 	if err != nil {
