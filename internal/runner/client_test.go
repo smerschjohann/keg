@@ -16,6 +16,7 @@ import (
 func speakEvents(t *testing.T, hostEnd io.ReadWriteCloser, events []Event) {
 	t.Helper()
 	go func() {
+		_, _ = frame.ReadFrame(hostEnd)
 		for _, ev := range events {
 			b, err := json.Marshal(ev)
 			if err != nil {
