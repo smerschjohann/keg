@@ -66,6 +66,12 @@ func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
 		bin = resolved
 	}
 
+	// WP-M8b: fail early and clearly on an incompatible bwrap instead of a
+	// misleading mount failure deep inside the sandbox. Runner class 127.
+	if err := CheckBwrapVersion(bin); err != nil {
+		return nil, err
+	}
+
 	args, err := BuildArgs(p)
 	if err != nil {
 		return nil, fmt.Errorf("build bwrap args: %w", err)
