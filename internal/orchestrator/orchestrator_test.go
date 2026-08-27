@@ -1152,3 +1152,26 @@ mounts:
 		t.Errorf("read-only mount /opt/readonly should NOT be in %s, got: %v", EnvLandlockWritable, parts)
 	}
 }
+
+func TestUnshareStageArgv(t *testing.T) {
+	cfg := &stageConfig{
+		BwrapPath: "/usr/bin/bwrap",
+		Args:      []string{"--ro-bind", "/", "/"},
+	}
+	argv, envJSON, err := unshareStageArgv("/usr/bin/unshare", "/usr/bin/keg", cfg)
+	if err != nil {
+		t.Fatalf("unshareStageArgv: %v", err)
+	}
+	if envJSON == "" {
+		t.Fatal("expected non-empty envJSON")
+	}
+	wantFlags := []string{"-U", "-r", "-n", "-m", "-p", "--fork", "--keep-caps"}
+	for _, flag := range wantFlags {
+		if !slices.Contains(argv, flag) {
+			t.Errorf("argv %v missing expected flag %q", argv, flag)
+		}
+	}
+	if argv[len(argv)-1] != NetnsStageCommandName {
+		t.Errorf("argv last element = %q, want %q", argv[len(argv)-1], NetnsStageCommandName)
+	}
+}

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -67,13 +68,14 @@ func unshareStageArgv(unshareBin, selfExe string, cfg *stageConfig) ([]string, s
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal stage config: %w", err)
 	}
-	uid, gid := os.Getuid(), os.Getgid()
 	return []string{
 		unshareBin,
 		"-U",
-		fmt.Sprintf("--map-users=%d:%d:1", uid, uid),
-		fmt.Sprintf("--map-groups=%d:%d:1", gid, gid),
+		"-r",
 		"-n",
+		"-m",
+		"-p",
+		"--fork",
 		"--keep-caps",
 		selfExe,
 		NetnsStageCommandName,
@@ -89,6 +91,12 @@ func netnsStageMain() {
 		fmt.Fprintf(os.Stderr, "keg netns stage: bad config: %v\n", err)
 		os.Exit(125)
 	}
+
+	// Mount a fresh /proc private to our user+pid namespace. In container
+	// environments where the parent mount namespace has a read-only /proc/sys,
+	// this gives the stage and bwrap a writable /proc/sys for netns-scoped
+	// sysctl and bwrap's --disable-userns.
+	_ = syscall.Mount("proc", "/proc", "proc", 0, "")
 
 	if err := bringLoopbackUp(); err != nil {
 		fmt.Fprintf(os.Stderr, "keg netns stage: loopback: %v\n", err)
@@ -185,16 +193,22 @@ func bringLoopbackUp() error {
 	return nil
 }
 
-// allowLowPorts lowers ip_unprivileged_port_start so the sandbox workload
-// (which holds no capabilities) can reach standard service ports such as
-// DNS :53 inside this private namespace. Per-netns scope: no effect on the
-// host.
+// allowLowPorts attempts to lower ip_unprivileged_port_start inside the private
+// network namespace. Per-netns scope: no effect on the host. If /proc/sys is
+// mounted read-only (common in container/k8s environments) or write access is
+// restricted, the error is ignored because the netns stage retains
+// CAP_NET_BIND_SERVICE to bind low ports (e.g. :53) before dropping capabilities,
+// and clients reaching low ports do not require capabilities.
 func allowLowPorts() error {
-	if err := os.WriteFile("/proc/sys/net/ipv4/ip_unprivileged_port_start",
-		[]byte("0"), 0o600); err != nil { // #nosec G304 -- fixed kernel path
-		return fmt.Errorf("write sysctl: %w", err)
+	err := os.WriteFile("/proc/sys/net/ipv4/ip_unprivileged_port_start",
+		[]byte("0"), 0o600) // #nosec G304 -- fixed kernel path
+	if err == nil {
+		return nil
 	}
-	return nil
+	if errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("write sysctl: %w", err)
 }
 
 // dropCapabilities clears effective/permitted/inheritable sets entirely so
