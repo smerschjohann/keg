@@ -246,6 +246,10 @@
         "always": {
           "type": "boolean",
           "description": "Inject secret into all sandboxes automatically without needing repo declaration."
+        },
+        "async": {
+          "type": "boolean",
+          "description": "Fetch secret asynchronously in the background instead of blocking sandbox startup."
         }
       }
     },

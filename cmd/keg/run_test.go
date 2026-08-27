@@ -796,6 +796,43 @@ secret_sources:
 	}
 }
 
+func TestBuildRunPlan_Secrets_AsyncSource(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), `
+version: "1"
+secrets:
+  - name: ai_token
+    env: AI_TOKEN_FILE
+`)
+	script := filepath.Join(t.TempDir(), "get-ai-token")
+	writeFile(t, script, "#!/bin/sh\necho -n \"test-ai-token\"")
+	_ = os.Chmod(script, 0o750)
+
+	userCfg := filepath.Join(t.TempDir(), "user.yaml")
+	writeFile(t, userCfg, `
+secret_sources:
+  ai_token:
+    cmd: ["`+script+`"]
+    async: true
+`)
+
+	plan, err := buildRunPlan(dir, "", userCfg, orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+	wantSecretDir := filepath.Join(plan.TmpDir, "secrets")
+	if plan.SecretDir != wantSecretDir {
+		t.Errorf("SecretDir = %q, want %q", plan.SecretDir, wantSecretDir)
+	}
+	if plan.EnvSet["AI_TOKEN_FILE"] != "/run/secrets/ai_token" {
+		t.Errorf("AI_TOKEN_FILE env = %q, want /run/secrets/ai_token", plan.EnvSet["AI_TOKEN_FILE"])
+	}
+	// Async source: file should NOT exist yet during plan build
+	if _, err := os.Stat(filepath.Join(wantSecretDir, "ai_token")); !os.IsNotExist(err) {
+		t.Errorf("secret file should not exist yet before background services start")
+	}
+}
+
 func TestBuildRunPlan_Secrets_MissingSourceFails(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".keg.yaml"), `

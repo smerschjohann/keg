@@ -420,3 +420,138 @@ func TestRefresher_TemplateExpansion(t *testing.T) {
 		t.Errorf("refreshed = %q, want 'v2 900 my-inst'", lastData)
 	}
 }
+
+func TestFetchInitial_AsyncSkipped(t *testing.T) {
+	script := writeScript(t, "get-token-fail", `echo "should not be called" >&2; exit 1`)
+	destDir := filepath.Join(t.TempDir(), "secrets")
+
+	requested := []config.SecretRef{
+		{Name: "async_token"},
+	}
+	sources := map[string]config.SecretSource{
+		"async_token": {
+			Cmd:   []string{script},
+			Async: true,
+		},
+	}
+
+	if err := FetchInitial(context.Background(), requested, sources, destDir); err != nil {
+		t.Fatalf("FetchInitial with async source must not fail: %v", err)
+	}
+
+	secretPath := filepath.Join(destDir, "async_token")
+	if _, err := os.Stat(secretPath); !os.IsNotExist(err) {
+		t.Errorf("secret file %s should not exist after FetchInitial with Async=true", secretPath)
+	}
+}
+
+func TestRefresher_AsyncInitialFetch(t *testing.T) {
+	script := writeScript(t, "get-async-token", `echo -n "async-secret-val"`)
+	destDir := filepath.Join(t.TempDir(), "secrets")
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	requested := []config.SecretRef{{Name: "async_token"}}
+	sources := map[string]config.SecretSource{
+		"async_token": {
+			Cmd:   []string{script},
+			Async: true,
+		},
+	}
+
+	var changedAudit atomic.Bool
+	auditFn := func(name, status string) {
+		if status == "changed" {
+			changedAudit.Store(true)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	refresher := NewRefresher()
+	go refresher.Start(ctx, requested, sources, destDir, auditFn, nil)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var gotData string
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		data, err := os.ReadFile(filepath.Join(destDir, "async_token"))
+		if err == nil {
+			gotData = string(data)
+			if gotData == "async-secret-val" {
+				break
+			}
+		}
+	}
+
+	if gotData != "async-secret-val" {
+		t.Errorf("async secret content = %q, want 'async-secret-val'", gotData)
+	}
+	if !changedAudit.Load() {
+		t.Error("expected changed audit after async initial fetch")
+	}
+}
+
+func TestRefresher_AsyncWithInterval(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "state.txt")
+	if err := os.WriteFile(stateFile, []byte("val1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	script := writeScript(t, "get-async-dyn", `cat `+stateFile)
+	destDir := filepath.Join(t.TempDir(), "secrets")
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	requested := []config.SecretRef{{Name: "async_dyn"}}
+	sources := map[string]config.SecretSource{
+		"async_dyn": {
+			Cmd:      []string{script},
+			Async:    true,
+			Interval: config.Duration{Duration: 30 * time.Millisecond},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	refresher := NewRefresher()
+	go refresher.Start(ctx, requested, sources, destDir, nil, nil)
+
+	// Verify initial async fetch
+	deadline := time.Now().Add(2 * time.Second)
+	var gotData string
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		data, err := os.ReadFile(filepath.Join(destDir, "async_dyn"))
+		if err == nil {
+			gotData = string(data)
+			if gotData == "val1" {
+				break
+			}
+		}
+	}
+	if gotData != "val1" {
+		t.Fatalf("initial async data = %q, want 'val1'", gotData)
+	}
+
+	// Update state and verify periodic refresh
+	_ = os.WriteFile(stateFile, []byte("val2"), 0o600)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		data, err := os.ReadFile(filepath.Join(destDir, "async_dyn"))
+		if err == nil {
+			gotData = string(data)
+			if gotData == "val2" {
+				break
+			}
+		}
+	}
+	if gotData != "val2" {
+		t.Errorf("refreshed async data = %q, want 'val2'", gotData)
+	}
+}

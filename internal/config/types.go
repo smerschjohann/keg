@@ -246,6 +246,7 @@ type SecretSource struct {
 	Timeout        Duration `yaml:"timeout"`
 	OnRefreshError string   `yaml:"on_refresh_error"` // keep (default) | fail
 	Always         bool     `yaml:"always"`           // inject into every sandbox
+	Async          bool     `yaml:"async"`            // fetch asynchronously in background after start
 }
 
 // RepoOverride is the per-target-repo section of the user config. It shares

@@ -37,6 +37,9 @@ func FetchInitial(ctx context.Context, requested []config.SecretRef, sources map
 		if !ok {
 			return fmt.Errorf("secret %q requested by repository is not defined in secret_sources (user config)", ref.Name)
 		}
+		if source.Async {
+			continue
+		}
 		if len(source.Cmd) == 0 {
 			return fmt.Errorf("secret %q has empty command", ref.Name)
 		}
@@ -145,7 +148,7 @@ func NewRefresher() *Refresher {
 	return &Refresher{}
 }
 
-// Start launches a refresher goroutine for each dynamic secret (interval > 0)
+// Start launches a refresher goroutine for each dynamic secret (interval > 0 or async)
 // and blocks until ctx is canceled or a fatal error occurs.
 func (r *Refresher) Start(ctx context.Context, requested []config.SecretRef, sources map[string]config.SecretSource, destDir string, audit func(name, status string), onFatalError func(err error), tctx ...template.Context) {
 	var baseCtx template.Context
@@ -156,77 +159,95 @@ func (r *Refresher) Start(ctx context.Context, requested []config.SecretRef, sou
 	var wg sync.WaitGroup
 	for _, ref := range requested {
 		source, ok := sources[ref.Name]
-		if !ok || source.Interval.Duration <= 0 {
+		if !ok || (source.Interval.Duration <= 0 && !source.Async) {
 			continue
 		}
 		wg.Add(1)
 		go func(ref config.SecretRef, src config.SecretSource) {
 			defer wg.Done()
-			ticker := time.NewTicker(src.Interval.Duration)
-			defer ticker.Stop()
 			name := ref.Name
 			sctx := buildSecretContext(ref, baseCtx)
+
+			doFetch := func() error {
+				renderedCmd, err := renderCmd(src.Cmd, sctx)
+				if err != nil {
+					if audit != nil {
+						audit(name, "error")
+					}
+					if src.OnRefreshError == "fail" {
+						if onFatalError != nil {
+							onFatalError(fmt.Errorf("render secret %q cmd: %w", name, err))
+						}
+						return err
+					}
+					return nil
+				}
+				timeout := src.Timeout.Duration
+				if timeout <= 0 {
+					timeout = 10 * time.Second
+				}
+				fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+				newData, err := runCmd(fetchCtx, renderedCmd, buildSubprocessEnv(sctx))
+				cancel()
+				if err != nil {
+					if audit != nil {
+						audit(name, "error")
+					}
+					if src.OnRefreshError == "fail" {
+						if onFatalError != nil {
+							onFatalError(fmt.Errorf("fetch secret %q: %w", name, err))
+						}
+						return err
+					}
+					return nil
+				}
+
+				curPath := filepath.Join(destDir, name)
+				curData, readErr := os.ReadFile(curPath) // #nosec G304 -- internal secret dir
+				if readErr == nil && bytes.Equal(curData, newData) {
+					if audit != nil {
+						audit(name, "unchanged")
+					}
+					return nil
+				}
+
+				if writeErr := writeAtomic(destDir, name, newData); writeErr != nil {
+					if audit != nil {
+						audit(name, "error")
+					}
+					if src.OnRefreshError == "fail" {
+						if onFatalError != nil {
+							onFatalError(fmt.Errorf("write secret %q: %w", name, writeErr))
+						}
+						return writeErr
+					}
+				} else {
+					if audit != nil {
+						audit(name, "changed")
+					}
+				}
+				return nil
+			}
+
+			if src.Async {
+				if err := doFetch(); err != nil && src.OnRefreshError == "fail" {
+					return
+				}
+			}
+
+			if src.Interval.Duration <= 0 {
+				return
+			}
+
+			ticker := time.NewTicker(src.Interval.Duration)
+			defer ticker.Stop()
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					renderedCmd, err := renderCmd(src.Cmd, sctx)
-					if err != nil {
-						if audit != nil {
-							audit(name, "error")
-						}
-						if src.OnRefreshError == "fail" {
-							if onFatalError != nil {
-								onFatalError(fmt.Errorf("render secret %q cmd: %w", name, err))
-							}
-							return
-						}
-						continue
-					}
-					timeout := src.Timeout.Duration
-					if timeout <= 0 {
-						timeout = 10 * time.Second
-					}
-					fetchCtx, cancel := context.WithTimeout(ctx, timeout)
-					newData, err := runCmd(fetchCtx, renderedCmd, buildSubprocessEnv(sctx))
-					cancel()
-					if err != nil {
-						if audit != nil {
-							audit(name, "error")
-						}
-						if src.OnRefreshError == "fail" {
-							if onFatalError != nil {
-								onFatalError(fmt.Errorf("refresh secret %q: %w", name, err))
-							}
-							return
-						}
-						continue
-					}
-
-					curPath := filepath.Join(destDir, name)
-					curData, readErr := os.ReadFile(curPath) // #nosec G304 -- internal secret dir
-					if readErr == nil && bytes.Equal(curData, newData) {
-						if audit != nil {
-							audit(name, "unchanged")
-						}
-						continue
-					}
-
-					if writeErr := writeAtomic(destDir, name, newData); writeErr != nil {
-						if audit != nil {
-							audit(name, "error")
-						}
-						if src.OnRefreshError == "fail" {
-							if onFatalError != nil {
-								onFatalError(fmt.Errorf("write refreshed secret %q: %w", name, writeErr))
-							}
-							return
-						}
-					} else {
-						if audit != nil {
-							audit(name, "changed")
-						}
+					if err := doFetch(); err != nil && src.OnRefreshError == "fail" {
+						return
 					}
 				}
 			}

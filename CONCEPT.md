@@ -431,6 +431,7 @@ dem Host**.
       on_refresh_error: keep   # keep = letzter guter Wert bleibt (Default)
                                # fail = Sandbox wird beendet
       always: true          # optional: in JEDE Sandbox einspielen (s. u.)
+      async: true           # optional: asynchron im Hintergrund laden (blockiert nicht den Start)
   ```
   Zusätzlich setzt `keg` im Subprozess `KEG_INSTANCE`, `KEG_SECRET_NAME`
   und `KEG_REPO_DIR` in der Host-Umgebung (`c.Env`).

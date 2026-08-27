@@ -218,6 +218,25 @@ secret_sources:
 	}
 }
 
+func TestParseUser_SecretSourceAsync(t *testing.T) {
+	user, err := ParseUser([]byte(`
+secret_sources:
+  ai_token:
+    cmd: [genkey, my-instance, "60"]
+    async: true
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	src, ok := user.SecretSources["ai_token"]
+	if !ok {
+		t.Fatal("secret source ai_token missing")
+	}
+	if !src.Async {
+		t.Errorf("source.Async = false, want true (async-fetch flag)")
+	}
+}
+
 func TestParseUser_RepoOverrideSecretsNeed(t *testing.T) {
 	user, err := ParseUser([]byte(`
 repos:

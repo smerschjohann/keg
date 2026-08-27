@@ -287,6 +287,7 @@ secret_sources:
     timeout: 5s
     on_refresh_error: keep
     # always: true   # optional: Secret in JEDE Sandbox einspielen
+    # async: true    # optional: asynchron im Hintergrund holen (blockiert nicht den Start)
 
 # Bestehende Host-Dateien als Secrets bereitstellen (ro-bind nach
 # /run/secrets/<name>; ~ und $VAR werden expandiert). Repo deklariert
