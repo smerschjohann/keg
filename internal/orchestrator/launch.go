@@ -380,6 +380,13 @@ func (s *Sandbox) Close() {
 	closeFiles(ends)
 }
 
+// IsClosed reports whether the sandbox has been closed.
+func (s *Sandbox) IsClosed() bool {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	return s.closed
+}
+
 func closeFiles(files []*os.File) {
 	for _, f := range files {
 		if f != nil {

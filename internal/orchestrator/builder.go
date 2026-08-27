@@ -464,6 +464,10 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 // StartBackgroundServices starts all configured egress, proxy, DNS, port-forwarding,
 // delegation runner, and secret refresh services for a running sandbox.
 func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *config.User, auditWriter io.Writer) error {
+	if sb.IsClosed() {
+		return nil
+	}
+
 	// DNS channel
 	if plan.EgressDNS != nil {
 		dnsCfg := *plan.EgressDNS

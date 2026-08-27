@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/smerschjohann/keg/internal/egress/proxy"
+	"github.com/smerschjohann/keg/internal/runner"
 )
 
 // TestProxyEnv pins the environment contract injected when a repo declares
@@ -88,5 +89,31 @@ func TestSandbox_ChannelAccessor(t *testing.T) {
 	}
 	if got := sb.Channel(99); got != nil {
 		t.Errorf("Channel(99) = %v, want nil", got)
+	}
+}
+
+// TestClosedSandboxServices verifies that starting background services on an
+// already-closed sandbox (e.g. fast-exiting workload) succeeds cleanly as a no-op
+// without returning channel missing errors.
+func TestClosedSandboxServices(t *testing.T) {
+	t.Parallel()
+	sb := &Sandbox{}
+	sb.Close()
+
+	if !sb.IsClosed() {
+		t.Fatal("expected sb.IsClosed() == true after Close()")
+	}
+
+	if err := sb.StartEgressDNS(DNSConfig{}, nil); err != nil {
+		t.Errorf("StartEgressDNS on closed sandbox: %v", err)
+	}
+	if err := sb.StartEgressProxy(EgressProxyConfig{}); err != nil {
+		t.Errorf("StartEgressProxy on closed sandbox: %v", err)
+	}
+	if err := sb.StartPortsForward(nil); err != nil {
+		t.Errorf("StartPortsForward on closed sandbox: %v", err)
+	}
+	if err := sb.StartRunner(runner.ServerConfig{}); err != nil {
+		t.Errorf("StartRunner on closed sandbox: %v", err)
 	}
 }

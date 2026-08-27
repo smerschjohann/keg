@@ -72,8 +72,14 @@ func (s *Sandbox) Channel(guestFD int) *os.File {
 // Each accepted connection is tunneled over channel E to the sandbox
 // loopback target. Resources are released by Sandbox.Close.
 func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
+	if s.IsClosed() {
+		return nil
+	}
 	file := s.Channel(FDPorts)
 	if file == nil {
+		if s.IsClosed() {
+			return nil
+		}
 		return fmt.Errorf("ports forward: channel fd %d not available", FDPorts)
 	}
 	sess := muxado.Server(file, nil)
@@ -97,7 +103,7 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 		if s.closed {
 			s.closeMu.Unlock()
 			_ = ln.Close()
-			return fmt.Errorf("ports forward: sandbox closed")
+			return nil
 		}
 		s.portListeners = append(s.portListeners, ln)
 		s.closeMu.Unlock()
@@ -110,8 +116,14 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 // sandbox exits (closing the host end terminates Serve). The workload can
 // use it immediately after Launch returns.
 func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
+	if s.IsClosed() {
+		return nil
+	}
 	file := s.Channel(FDProxy)
 	if file == nil {
+		if s.IsClosed() {
+			return nil
+		}
 		return fmt.Errorf("egress proxy: channel fd %d not available", FDProxy)
 	}
 	audit := cfg.Audit
@@ -140,8 +152,14 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 // sandbox exits. The :53 listener lives in the netns stage; this host side
 // applies policy and reaches the upstream with real network access.
 func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) error {
+	if s.IsClosed() {
+		return nil
+	}
 	file := s.Channel(FDDNS)
 	if file == nil {
+		if s.IsClosed() {
+			return nil
+		}
 		return fmt.Errorf("egress dns: channel fd %d not available", FDDNS)
 	}
 	table := newRawEndpoints()
@@ -180,8 +198,14 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 // all running jobs). The engine was validated before Launch; whitelisted
 // jobs run in the repo root with the host user's environment.
 func (s *Sandbox) StartRunner(cfg runner.ServerConfig) error {
+	if s.IsClosed() {
+		return nil
+	}
 	file := s.Channel(FDRunner)
 	if file == nil {
+		if s.IsClosed() {
+			return nil
+		}
 		return fmt.Errorf("runner: channel fd %d not available", FDRunner)
 	}
 	origAudit := cfg.Audit
