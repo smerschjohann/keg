@@ -6,10 +6,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/smerschjohann/keg/internal/landlock"
 
 	"github.com/moby/sys/reexec"
 	"golang.ngrok.com/muxado"
@@ -497,5 +500,21 @@ func TestInvariant_InheritAllStillHidesDenied(t *testing.T) {
 	got := out.String()
 	if got != "survives||" {
 		t.Errorf("inherit_all leaked denied variables: got %q, want 'survives||'", got)
+	}
+}
+
+func TestBuildGuestLandlockConfig(t *testing.T) {
+	cfg := buildGuestLandlockConfig(landlock.ModeAuto, "/home/sandbox", "/workspace", "/var/cache/custom", "/data/rw")
+	if cfg.Mode != landlock.ModeAuto {
+		t.Errorf("Mode = %v, want %v", cfg.Mode, landlock.ModeAuto)
+	}
+	if !slices.Contains(cfg.ReadOnlyDirs, "/") {
+		t.Errorf("ReadOnlyDirs should contain '/', got %v", cfg.ReadOnlyDirs)
+	}
+	wantWritable := []string{"/tmp", "/dev", "/home/sandbox", "/workspace", "/var/cache/custom", "/data/rw"}
+	for _, w := range wantWritable {
+		if !slices.Contains(cfg.WritableDirs, w) {
+			t.Errorf("WritableDirs should contain %q, got %v", w, cfg.WritableDirs)
+		}
 	}
 }

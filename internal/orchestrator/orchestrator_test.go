@@ -1112,3 +1112,43 @@ func TestInvariant_PortPublishBindsOnlyLoopback(t *testing.T) {
 		t.Errorf("listener IP is %v, want loopback", addr.IP)
 	}
 }
+
+func TestBuildPlan_LandlockWritableMounts(t *testing.T) {
+	repoDir := t.TempDir()
+	repoYAML := `version: "1"
+mounts:
+  - src: /tmp/custom-rw
+    dest: /var/cache/myapp
+    mode: rw
+  - src: /tmp/custom-ro
+    dest: /opt/readonly
+    mode: ro
+  - src: /tmp/custom-eph
+    dest: /data/ephemeral
+    mode: ephemeral
+`
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte(repoYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	approveRepo(t, repoDir, []byte(repoYAML))
+
+	plan, _, err := BuildPlan(repoDir, "", "", OverlayPlain, "", OverlayPlain, "", "test-landlock-mounts")
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	writableEnv := plan.EnvSet[EnvLandlockWritable]
+	if writableEnv == "" {
+		t.Fatalf("plan.EnvSet[%s] is empty, expected writable mount destinations", EnvLandlockWritable)
+	}
+	parts := strings.Split(writableEnv, ",")
+	if !slices.Contains(parts, "/var/cache/myapp") {
+		t.Errorf("expected /var/cache/myapp in %s, got: %v", EnvLandlockWritable, parts)
+	}
+	if !slices.Contains(parts, "/data/ephemeral") {
+		t.Errorf("expected /data/ephemeral in %s, got: %v", EnvLandlockWritable, parts)
+	}
+	if slices.Contains(parts, "/opt/readonly") {
+		t.Errorf("read-only mount /opt/readonly should NOT be in %s, got: %v", EnvLandlockWritable, parts)
+	}
+}

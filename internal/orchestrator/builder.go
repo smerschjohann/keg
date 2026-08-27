@@ -421,6 +421,19 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		plan.DiskLayerWork = filepath.Join(layer, "work")
 	}
 
+	// Inform guest Landlock about any extra writable mount destinations
+	var writableMounts []string
+	for _, m := range plan.Mounts {
+		if m.Mode != config.MountRO && m.Dest != "" {
+			if !slices.Contains(writableMounts, m.Dest) {
+				writableMounts = append(writableMounts, m.Dest)
+			}
+		}
+	}
+	if len(writableMounts) > 0 {
+		plan.EnvSet[EnvLandlockWritable] = strings.Join(writableMounts, ",")
+	}
+
 	return plan, user, nil
 }
 

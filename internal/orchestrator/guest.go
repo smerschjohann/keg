@@ -32,6 +32,10 @@ const EnvPortsForward = "KEG_PORTS"
 // EnvLandlock carries the configured Landlock LSM enforcement mode.
 const EnvLandlock = "KEG_LANDLOCK"
 
+// EnvLandlockWritable carries a comma-separated list of additional writable
+// directories (e.g. from custom RW / ephemeral mounts) to be permitted by Landlock.
+const EnvLandlockWritable = "KEG_LANDLOCK_WRITABLE"
+
 // GuestCommandName is the reexec name under which the sandbox entrypoint
 // runs (second invocation of the same binary inside bwrap).
 const GuestCommandName = "github.com/smerschjohann/keg/guest"
@@ -107,6 +111,32 @@ func prepareGuestProcess() {
 	applyLandlock()
 }
 
+// buildGuestLandlockConfig constructs the Landlock filesystem ruleset config
+// for the guest sandbox environment. /dev is included in WritableDirs so that
+// pseudo-terminals (/dev/ptmx, /dev/pts/*) and standard streams (/dev/null, etc.)
+// can be opened in read-write mode. Any extra writable paths (e.g. from custom RW
+// mounts) are also added.
+func buildGuestLandlockConfig(mode landlock.Mode, home, cwd string, extraWritable ...string) landlock.RulesetConfig {
+	writable := []string{"/tmp", "/dev"}
+	if home != "" {
+		writable = append(writable, home)
+	}
+	if cwd != "" {
+		writable = append(writable, cwd)
+	}
+	for _, p := range extraWritable {
+		p = strings.TrimSpace(p)
+		if p != "" && !slices.Contains(writable, p) {
+			writable = append(writable, p)
+		}
+	}
+	return landlock.RulesetConfig{
+		Mode:         mode,
+		ReadOnlyDirs: []string{"/"},
+		WritableDirs: writable,
+	}
+}
+
 func applyLandlock() {
 	modeStr := os.Getenv(EnvLandlock)
 	_ = os.Unsetenv(EnvLandlock)
@@ -117,20 +147,18 @@ func applyLandlock() {
 	if mode == landlock.ModeOff {
 		return
 	}
+	writableExtraStr := os.Getenv(EnvLandlockWritable)
+	_ = os.Unsetenv(EnvLandlockWritable)
+	var extraWritable []string
+	if writableExtraStr != "" {
+		extraWritable = strings.Split(writableExtraStr, ",")
+	}
 	home := os.Getenv("HOME")
 	if home == "" {
 		home = "/home/sandbox"
 	}
 	cwd, _ := os.Getwd()
-	writable := []string{"/tmp", home}
-	if cwd != "" {
-		writable = append(writable, cwd)
-	}
-	cfg := landlock.RulesetConfig{
-		Mode:         mode,
-		ReadOnlyDirs: []string{"/"},
-		WritableDirs: writable,
-	}
+	cfg := buildGuestLandlockConfig(mode, home, cwd, extraWritable...)
 	if err := landlock.Restrict(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "keg guest: landlock: %v\n", err)
 	}
@@ -296,11 +324,12 @@ func applyProxyEnv() {
 }
 
 var internalEnvMarkers = map[string]bool{
-	EnvKeepMarkerName: true,
-	EnvDelegation:     true,
-	EnvProxyBridge:    true,
-	EnvPortsForward:   true,
-	EnvLandlock:       true,
+	EnvKeepMarkerName:   true,
+	EnvDelegation:       true,
+	EnvProxyBridge:      true,
+	EnvPortsForward:     true,
+	EnvLandlock:         true,
+	EnvLandlockWritable: true,
 }
 
 // InteractiveEnvVars lists host environment variables passed through to the
