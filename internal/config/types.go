@@ -424,8 +424,13 @@ func (r *Repo) validate() error {
 }
 
 // EffectiveTrustAnchors computes the full, sorted, and deduplicated list of relative
-// trust anchor paths for a repository. If exact or prefix delegated tasks are defined
-// and a justfile exists in repoDir, it is automatically included if not already present.
+// trust anchor paths for a repository.
+//
+// All explicitly declared trust_anchors in .keg.yaml are included.
+// Furthermore, if exact or prefix delegated tasks are defined:
+//   - The root justfile ("justfile", "Justfile", ".justfile") in repoDir is automatically detected.
+//   - All discovered and explicitly declared justfiles are recursively inspected for
+//     import / !include statements to include all imported justfiles as trust anchors.
 func EffectiveTrustAnchors(r *Repo, repoDir string) ([]string, error) {
 	if r == nil {
 		return nil, nil
@@ -433,23 +438,25 @@ func EffectiveTrustAnchors(r *Repo, repoDir string) ([]string, error) {
 	seen := make(map[string]bool)
 	var list []string
 
+	// 1. Explicitly configured trust anchors
 	for _, a := range r.TrustAnchors {
 		cleaned := filepath.Clean(strings.TrimSpace(a))
-		if cleaned != "" && !seen[cleaned] {
-			seen[cleaned] = true
-			list = append(list, cleaned)
+		if cleaned != "" && cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			if !seen[cleaned] {
+				seen[cleaned] = true
+				list = append(list, cleaned)
+			}
+			// If an explicit anchor is a justfile or contains imports, discover them
+			collectJustfileAnchors(repoDir, cleaned, seen, &list)
 		}
 	}
 
-	// Auto-detect justfile if delegated tasks use just
+	// 2. Auto-detect root justfile if delegated tasks use just
 	if len(r.DelegatedTasks.Exact) > 0 || len(r.DelegatedTasks.Prefixes) > 0 {
 		for _, name := range []string{"justfile", "Justfile", ".justfile"} {
 			p := filepath.Join(repoDir, name)
 			if info, err := os.Stat(p); err == nil && !info.IsDir() {
-				if !seen[name] {
-					seen[name] = true
-					list = append(list, name)
-				}
+				collectJustfileAnchors(repoDir, name, seen, &list)
 				break
 			}
 		}

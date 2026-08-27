@@ -83,10 +83,11 @@ Der Audit wurde direkt aus der laufenden `keg`-Gastumgebung heraus durchgeführt
 * **Interaktiv vs. Non-TTY:** TTY fordert Bestätigung mit formatierter Diff-Ansicht; Non-TTY bricht fail-closed mit Exit-Code 1 ab.
 * **Status:** ✅ Vollständig umgesetzt und verifiziert.
 
-#### B. Generische Trust-Anchors für Repositories ([`2026-08-27.1-trust-anchors.md`](../docs/plans/2026-08-27.1-trust-anchors.md))
+#### B. Generische Trust-Anchors für Repositories ([`2026-08-27.1-trust-anchors.md`](file:///home/coder/dev/keg/docs/plans/2026-08-27.1-trust-anchors.md))
 * **Deklaration:** `trust_anchors: [...]` in der Repo-Konfiguration für beliebige Build-Skripte oder Hilfsdateien.
-* **Auto-Detection:** Automatische Aufnahme von `justfile` / `Justfile` bei deklarierten delegierten Just-Tasks (`delegated_tasks.exact` / `prefixes`).
-* **Laufzeit-Verifikation:** Prüfung der Integrität unmittelbar vor der Ausführung delegierter Host-Befehle im Runner ([`internal/runner/server.go`](../internal/runner/server.go)), um Tampering während des Laufs auszuschließen.
+* **Auto-Detection:** Automatische Aufnahme des Root-`justfile` (bzw. `Justfile`, `.justfile`) bei deklarierten delegierten Just-Tasks (`delegated_tasks.exact` / `prefixes`).
+* **Rekursive Import-Auflösung:** Vollständige statische Erkennung aller in Justfiles referenzierten `import`-, `import?`- und `!include`-Dateien (wie z. B. `sandbox.just` oder Modul-Justfiles) inklusive Zyklen- und Traversal-Schutz ([`internal/config/justfile.go`](file:///home/coder/dev/keg/internal/config/justfile.go)).
+* **Laufzeit-Verifikation:** Prüfung der Integrität unmittelbar vor der Ausführung delegierter Host-Befehle im Runner ([`internal/runner/server.go`](file:///home/coder/dev/keg/internal/runner/server.go)), um Tampering während des Laufs auszuschließen.
 * **CLI-Integration:** `keg trust`, `keg trust --status`, `keg trust --revoke`.
 * **Status:** ✅ Vollständig umgesetzt und verifiziert.
 
