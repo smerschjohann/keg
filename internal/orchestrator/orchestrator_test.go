@@ -1165,7 +1165,16 @@ func TestUnshareStageArgv(t *testing.T) {
 	if envJSON == "" {
 		t.Fatal("expected non-empty envJSON")
 	}
-	wantFlags := []string{"-U", "-r", "-n", "-m", "-p", "--fork", "--keep-caps"}
+	wantFlags := []string{
+		"-U",
+		fmt.Sprintf("--map-users=%d:%d:1", os.Getuid(), os.Getuid()),
+		fmt.Sprintf("--map-groups=%d:%d:1", os.Getgid(), os.Getgid()),
+		"-n",
+		"-m",
+		"-p",
+		"--fork",
+		"--keep-caps",
+	}
 	for _, flag := range wantFlags {
 		if !slices.Contains(argv, flag) {
 			t.Errorf("argv %v missing expected flag %q", argv, flag)

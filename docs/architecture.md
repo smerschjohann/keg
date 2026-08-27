@@ -22,7 +22,7 @@
 │  │           hosts-Mappings ─→ Zonen-Whitelist (*.svc.cluster.local)        │
 │  │           ─✓→ Upstream (kube-dns)      ─✗→ NXDOMAIN                      │
 │  └── startet:                                                               │
-│        unshare -U -r -n -m -p --fork --keep-caps                            │
+│        unshare -U --map-users=<uid>:<uid>:1 --map-groups=… -n -m -p --fork --keep-caps │
 │                     │                                                       │
 │                     ▼  exec                                                 │
 │  ┌── NETNS-STAGE (Prozess #2, argv[1]=keg/netns-stage) ──────────────┐  │

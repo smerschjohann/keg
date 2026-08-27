@@ -68,10 +68,12 @@ func unshareStageArgv(unshareBin, selfExe string, cfg *stageConfig) ([]string, s
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal stage config: %w", err)
 	}
+	uid, gid := os.Getuid(), os.Getgid()
 	return []string{
 		unshareBin,
 		"-U",
-		"-r",
+		fmt.Sprintf("--map-users=%d:%d:1", uid, uid),
+		fmt.Sprintf("--map-groups=%d:%d:1", gid, gid),
 		"-n",
 		"-m",
 		"-p",

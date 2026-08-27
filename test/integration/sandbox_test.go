@@ -21,6 +21,7 @@ func TestSandboxShellIsolated(t *testing.T) {
 	dir := t.TempDir()
 
 	out, code := runInSandbox(t, dir, orchestrator.OverlayPlain, `
+echo "UID:$(id -u)"
 echo "IFACES:$(ip -o link show 2>/dev/null | wc -l)"
 echo "HOME:$HOME"
 if touch "$HOME/probe" 2>/dev/null; then echo "HOME_WRITABLE:yes"; else echo "HOME_WRITABLE:no"; fi
@@ -33,6 +34,13 @@ echo "MARKER:$SANDBOX_MARKER"
 	}
 
 	checks := map[string]func(string) error{
+		"UID": func(v string) error {
+			want := fmt.Sprintf("%d", os.Getuid())
+			if v != want {
+				t.Errorf("UID = %q, want %s (invoking user's UID must be preserved)", v, want)
+			}
+			return nil
+		},
 		"IFACES": func(v string) error {
 			// --unshare-all => only loopback exists.
 			if v != "1" {
