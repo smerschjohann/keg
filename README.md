@@ -367,7 +367,8 @@ make tidy            # go mod tidy (muss diff-frei bleiben)
 
 ## 7. Dokumentation
 
-- [`CONCEPT.md`](file:///home/coder/dev/keg/CONCEPT.md) — Detaillierte Architektur, Datenflüsse und Designentscheidungen.
-- [`THREAT_MODEL.md`](file:///home/coder/dev/keg/THREAT_MODEL.md) — Bedrohungsmodell und Sicherheitsinvarianten (§8).
-- [`IMPLEMENTATION_PLAN.md`](file:///home/coder/dev/keg/IMPLEMENTATION_PLAN.md) — Meilensteine M1–M9 und Status.
-- [`docs/errors.md`](file:///home/coder/dev/keg/docs/errors.md) — Fehlerbild-Katalog und Exit-Codes.
+- [`CONCEPT.md`](CONCEPT.md) — Detaillierte Architektur, Datenflüsse und Designentscheidungen.
+- [`THREAT_MODEL.md`](THREAT_MODEL.md) — Bedrohungsmodell und Sicherheitsinvarianten (§8).
+- [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — Meilensteine M1–M9 und Status.
+- [`docs/container-requirements.md`](docs/container-requirements.md) — Mindestanforderungen für den Betrieb in Docker / Podman / Kubernetes.
+- [`docs/errors.md`](docs/errors.md) — Fehlerbild-Katalog und Exit-Codes.
