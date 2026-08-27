@@ -70,6 +70,28 @@ func TestCLI_CommandsExist(t *testing.T) {
 	}
 }
 
+func TestCLI_Version(t *testing.T) {
+	cmd := NewCommand()
+	if cmd.Version == "" {
+		t.Fatal("expected root command Version to be set, got empty string")
+	}
+	if cmd.Version != Version {
+		t.Fatalf("cmd.Version = %q, want %q", cmd.Version, Version)
+	}
+}
+
+func TestCLI_VersionFlag(t *testing.T) {
+	cmd := NewCommand()
+	var out strings.Builder
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "--version"}); err != nil {
+		t.Fatalf("version failed: %v", err)
+	}
+	if !strings.Contains(out.String(), Version) {
+		t.Errorf("version output %q does not contain %q", out.String(), Version)
+	}
+}
+
 func TestCLI_GlobalFlagsDeclared(t *testing.T) {
 	tests := []struct {
 		name string

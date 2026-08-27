@@ -12,6 +12,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// Version is the current release version of keg, set via ldflags at build time.
+var Version = "dev"
+
 // cliCommand aliases the urfave/cli command type so run.go stays readable.
 type cliCommand = cli.Command
 
@@ -21,6 +24,7 @@ func NewCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "keg",
 		Usage:     "Kernel-isolated Execution with Gateways — isolated development sandbox with zero-trust egress",
+		Version:   Version,
 		ErrWriter: os.Stderr,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
