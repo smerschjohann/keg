@@ -1,6 +1,6 @@
 # Keg (Kernel-isolated Execution with Gateways) Agent Prompt & Repository Setup Guide
 
-You are setting up a software repository to run securely inside **keg**, an isolated bubblewrap sandbox with zero-trust network egress and host delegation.
+You are setting up a software repository to run securely inside **keg**, an isolated bubblewrap sandbox with zero-trust network egress and host delegation. Create valid defaults but inform the user of possible shortcomings and give a list of things you want to delegate before actually doing it.
 
 ---
 
@@ -102,8 +102,7 @@ templates:
 # Environment variable configuration
 env:
   inherit:
-    - LANG
-    - COLORTERM
+    - MY_VAR_FROM_HOST
   set:
     APP_ENV: test
 
@@ -121,10 +120,7 @@ ports:
 network:
   mode: proxy # proxy | transparent | both
   sni_domains:
-    - proxy.golang.org
-    - sum.golang.org
-    - github.com
-    - objects.githubusercontent.com
+    - maven.repo.company.tld
   dns:
     enabled: true
     hosts:
@@ -138,6 +134,7 @@ delegated_tasks:
     - test-playwright
   raw:
     - cmd: git
+      # here we typically don't want to have push rights.
       subcommands: [add, branch, checkout, commit, diff, fetch, log, merge, rebase, reset, show, stash, status, switch]
       opts_with_value: ["-c", "-C", "--git-dir", "--work-tree"]
       flags: ["--no-pager", "--paginate", "--no-paginate"]
