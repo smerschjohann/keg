@@ -91,3 +91,23 @@ func TestListOpenFDs_ContainsOwnDescriptor(t *testing.T) {
 		t.Errorf("own fd %d missing from %v", f.Fd(), fds)
 	}
 }
+
+func TestScrubForeignFDs_PreservesSeccompFD(t *testing.T) {
+	seccompFD := openWithoutCloexec(t, filepath.Join(t.TempDir(), "seccomp-test"))
+	defer syscall.Close(seccompFD)
+
+	otherFD := openWithoutCloexec(t, filepath.Join(t.TempDir(), "other-test"))
+	defer syscall.Close(otherFD)
+
+	keep := map[int]bool{0: true, 1: true, 2: true, seccompFD: true}
+	if err := ScrubForeignFDs(keep); err != nil {
+		t.Fatalf("ScrubForeignFDs: %v", err)
+	}
+
+	if hasCloexec(seccompFD) {
+		t.Errorf("seccomp fd %d must NOT get FD_CLOEXEC when in keep set", seccompFD)
+	}
+	if !hasCloexec(otherFD) {
+		t.Errorf("other fd %d must get FD_CLOEXEC when not in keep set", otherFD)
+	}
+}

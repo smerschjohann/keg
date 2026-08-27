@@ -227,6 +227,7 @@ type ExecSource struct {
 type Security struct {
 	AllowWeakBwrap *bool  `yaml:"allow_weak_bwrap"`
 	Landlock       string `yaml:"landlock"` // auto | on | off
+	Seccomp        string `yaml:"seccomp"`  // auto | on | off
 }
 
 // LogCfg optionally directs audit output to a file.
@@ -527,6 +528,11 @@ func (u *User) validate() error {
 	case "", "auto", "on", "off":
 	default:
 		return fmt.Errorf("user config: security.landlock must be auto|on|off")
+	}
+	switch u.Security.Seccomp {
+	case "", "auto", "on", "off":
+	default:
+		return fmt.Errorf("user config: security.seccomp must be auto|on|off")
 	}
 	return nil
 }

@@ -705,3 +705,68 @@ func TestEffectiveTrustAnchors(t *testing.T) {
 		})
 	}
 }
+
+func TestUserConfig_SeccompToggleParsed(t *testing.T) {
+	tests := []struct {
+		name        string
+		yamlText    string
+		wantSeccomp string
+		wantErr     bool
+	}{
+		{
+			name:        "empty security block defaults",
+			yamlText:    "security:\n  landlock: auto\n",
+			wantSeccomp: "",
+			wantErr:     false,
+		},
+		{
+			name:        "explicit seccomp auto",
+			yamlText:    "security:\n  seccomp: auto\n",
+			wantSeccomp: "auto",
+			wantErr:     false,
+		},
+		{
+			name:        "explicit seccomp on",
+			yamlText:    "security:\n  seccomp: on\n",
+			wantSeccomp: "on",
+			wantErr:     false,
+		},
+		{
+			name:        "explicit seccomp off",
+			yamlText:    "security:\n  seccomp: off\n",
+			wantSeccomp: "off",
+			wantErr:     false,
+		},
+		{
+			name:     "invalid seccomp value",
+			yamlText: "security:\n  seccomp: disabled\n",
+			wantErr:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user, err := ParseUser([]byte(tt.yamlText))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseUser() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && user.Security.Seccomp != tt.wantSeccomp {
+				t.Errorf("user.Security.Seccomp = %q, want %q", user.Security.Seccomp, tt.wantSeccomp)
+			}
+		})
+	}
+}
+
+func TestRepoConfig_SeccompFieldRejected(t *testing.T) {
+	repoYAML := `
+version: "1"
+security:
+  seccomp: off
+`
+	_, err := ParseRepo([]byte(repoYAML))
+	if err == nil {
+		t.Fatal("repo config with security.seccomp must be rejected")
+	}
+	if !strings.Contains(err.Error(), "security") && !strings.Contains(err.Error(), "seccomp") {
+		t.Errorf("error %q must mention unknown field security/seccomp", err)
+	}
+}

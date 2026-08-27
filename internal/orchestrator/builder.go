@@ -165,9 +165,13 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		// explicit proxy path — both routes share the host-side policy.
 		Transparent: mode == "transparent" || mode == "both",
 		Landlock:    effective.Security.Landlock,
+		Seccomp:     effective.Security.Seccomp,
 	}
 	if plan.Landlock == "" {
 		plan.Landlock = "auto"
+	}
+	if plan.Seccomp == "" {
+		plan.Seccomp = "auto"
 	}
 	plan.EnvSet[EnvLandlock] = plan.Landlock
 	for k, v := range mergedEnv.Set {

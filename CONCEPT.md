@@ -47,6 +47,7 @@ Der Feature-Test auf dem Zielsystem war zu **100 % erfolgreich**:
 * FD-basierte Datei-Injektion (`--bind-data`) ✓
 * **Unprivilegiertes OverlayFS**: `--ro-overlay` (≥ 2 Sources),
   `--tmp-overlay`, persistentes RW-Overlay ✓ → Basis für Ephemeral-/Layer-Modi
+* **FD-basierte Seccomp-Filterung**: `--add-seccomp-fd` (ab bwrap 0.11) ✓
 * Security-Guardrails: `--disable-userns` (verhindert Nested-UserNS-Exploits),
   UID/GID-Mapping ✓
 

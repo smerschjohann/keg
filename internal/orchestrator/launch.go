@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/smerschjohann/keg/internal/seccomp"
 )
 
 // Sandbox is a running sandbox instance. It owns the host ends of the
@@ -66,10 +68,29 @@ func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
 		bin = resolved
 	}
 
-	// WP-M8b: fail early and clearly on an incompatible bwrap instead of a
-	// misleading mount failure deep inside the sandbox. Runner class 127.
-	if err := CheckBwrapVersion(bin); err != nil {
+	// WP-M8b: fail early and clearly on an incompatible bwrap if the requested plan
+	// requires newer features (overlay mounts, explicit seccomp). Runner class 127.
+	if err := CheckBwrapCompatibility(ctx, bin, p); err != nil {
 		return nil, err
+	}
+
+	// Seccomp: enabled by default (auto) when bwrap >= 0.11, unless explicitly disabled (off).
+	enableSeccomp := p.Seccomp != "off"
+	if p.Seccomp == "auto" || p.Seccomp == "" {
+		ver, _ := GetBwrapVersion(ctx, bin)
+		if ver.Major == 0 && ver.Minor < 11 {
+			enableSeccomp = false
+		}
+	}
+
+	var seccompBytecode []byte
+	if enableSeccomp {
+		p.SeccompFD = FDSeccomp
+		bc, err := seccomp.Compile(seccomp.DefaultProfile(), seccomp.NativeArch())
+		if err != nil {
+			return nil, fmt.Errorf("compile seccomp filter: %w", err)
+		}
+		seccompBytecode = bc
 	}
 
 	args, err := BuildArgs(p)
@@ -85,7 +106,16 @@ func Launch(ctx context.Context, p Plan) (*Sandbox, error) {
 
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		sb, startErr := start(ctx, bin, args, p)
+		var seccompFile *os.File
+		if len(seccompBytecode) > 0 {
+			f, err := seccomp.CreateMemfd("keg-seccomp", seccompBytecode)
+			if err != nil {
+				return nil, fmt.Errorf("create seccomp memfd: %w", err)
+			}
+			seccompFile = f
+		}
+
+		sb, startErr := start(ctx, bin, args, p, seccompFile)
 		if startErr != nil {
 			closeFiles(sb.hostEnds)
 			return nil, startErr // pre-start failures are not retryable races
@@ -146,7 +176,7 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 // start performs one sandbox launch attempt through the netns stage. On
 // success the process is being monitored; its eventual result is delivered
 // on sb.waitCh exactly once.
-func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, error) {
+func start(ctx context.Context, bin string, args []string, p Plan, seccompFile *os.File) (*Sandbox, error) {
 	// The netns stage wraps bwrap: it creates the private user+network
 	// namespace, prepares loopback and serves channel B (:53), then execs
 	// bwrap so the sandbox shares that namespace. Channel A keeps its own
@@ -155,6 +185,9 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	if p.Transparent {
 		ip, err := OutboundIPv4()
 		if err != nil {
+			if seccompFile != nil {
+				_ = seccompFile.Close()
+			}
 			return nil, fmt.Errorf("transparent mode: %w", err)
 		}
 		stage.OutboundIP = ip
@@ -168,6 +201,9 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	}
 	unshareBin, err := findUnshare()
 	if err != nil {
+		if seccompFile != nil {
+			_ = seccompFile.Close()
+		}
 		return nil, err
 	}
 	selfExe := p.SelfExe
@@ -176,7 +212,7 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 	}
 	stageSelf := p.SelfExe
 
-	// Channel socketpairs; guest ends become fds 3/4/5 inside the sandbox.
+	// Channel socketpairs; guest ends become fds 3/4/5/6 inside the sandbox.
 	var hostEnds []*os.File
 	var extra []*os.File
 	for i := 0; i < FDPreserved; i++ {
@@ -184,10 +220,16 @@ func start(ctx context.Context, bin string, args []string, p Plan) (*Sandbox, er
 		if err != nil {
 			closeFiles(hostEnds)
 			closeFiles(extra)
+			if seccompFile != nil {
+				_ = seccompFile.Close()
+			}
 			return nil, fmt.Errorf("create channel %d: %w", i, err)
 		}
 		hostEnds = append(hostEnds, host)
 		extra = append(extra, guest)
+	}
+	if seccompFile != nil {
+		extra = append(extra, seccompFile)
 	}
 
 	stdin := p.Stdin

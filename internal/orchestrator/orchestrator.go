@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/smerschjohann/keg/internal/config"
@@ -42,10 +43,11 @@ var CoreEnvVars = []string{"HOME", "TMPDIR", "SHELL", "PATH", "CODE_KEG"}
 // --preserve-fds flag to request; inheritance is verified by
 // TestSandboxFDInheritance (integration).
 const (
-	FDProxy  = 3 // Kanal A: egress proxy
-	FDDNS    = 4 // Kanal B: DNS
-	FDRunner = 5 // Kanal C: delegation runner
-	FDPorts  = 6 // Kanal E: port back-channel (host → sandbox services)
+	FDProxy   = 3 // Kanal A: egress proxy
+	FDDNS     = 4 // Kanal B: DNS
+	FDRunner  = 5 // Kanal C: delegation runner
+	FDPorts   = 6 // Kanal E: port back-channel (host → sandbox services)
+	FDSeccomp = 7 // Seccomp cBPF filter
 	// FDPreserved counts the extra FDs handed to bwrap via ExtraFiles.
 	FDPreserved = 4
 )
@@ -185,6 +187,10 @@ type Plan struct {
 
 	// Landlock controls Landlock LSM enforcement mode (auto | on | off).
 	Landlock string
+	// Seccomp controls Seccomp BPF enforcement mode (auto | on | off).
+	Seccomp string
+	// SeccompFD is the file descriptor number in the guest containing the cBPF program (0 = disabled).
+	SeccompFD int
 
 	Command []string // command to exec after `--`
 }
@@ -259,6 +265,11 @@ func BuildArgs(p Plan) ([]string, error) {
 		"--unshare-user",
 		"--die-with-parent",
 		"--disable-userns",
+	)
+	if p.SeccompFD > 0 {
+		args = append(args, "--add-seccomp-fd", strconv.Itoa(p.SeccompFD))
+	}
+	args = append(args,
 		"--proc", "/proc",
 		"--dev", "/dev",
 		// Fresh tmpfs over host /tmp: workload temp data never leaks.

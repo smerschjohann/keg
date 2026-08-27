@@ -51,6 +51,11 @@
           "type": "string",
           "enum": ["", "auto", "on", "off"],
           "description": "Landlock LSM mode ('auto', 'on', or 'off')."
+        },
+        "seccomp": {
+          "type": "string",
+          "enum": ["", "auto", "on", "off"],
+          "description": "Seccomp BPF filter mode ('auto', 'on', or 'off')."
         }
       },
       "description": "Security options and LSM toggles."

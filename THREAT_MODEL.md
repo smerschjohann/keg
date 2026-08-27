@@ -83,6 +83,7 @@ TB7: Host-Clients          ←→  Sandbox-Services        (Port-Rückkanal, nur
 | Threat | Bewertung | Maßnahme (Konzept-Referenz) |
 |---|---|---|
 | **S/E:** Escape aus Mount-NS (Kernel-Bug, setuid-Binary im Bind) | Niedrig (A1) aber folgenreich | `--disable-userns` (kein zweites UserNS), `/usr` ro, kein SUID-Angriffsziel durch UserNS-Disable; **Landlock als zweite Linie** (§6.1): selbst ein entkommener Prozess bleibt FS-eingeschränkt |
+| **S/E:** Kernel-Syscall-LPE (bpf, io_uring, perf_event, userfaultfd, keyring, kexec/module) | **Mittel** | **Default-Seccomp-BPF-Filter** (`internal/seccomp` via bwrap `--add-seccomp-fd`): Default-Allow + Blockliste für kritische Syscalls (`bpf`, `io_uring_*`, `perf_event_open`, `keyctl`, `userfaultfd`, `kexec_*`, `*module`, `mount`, `reboot`, non-native Audit-Arch) liefert `EPERM`. `ptrace` und `process_vm_readv/writev` bleiben im isolierten PID-Namespace bewusst erlaubt für Entwickler-Tools (`dlv`, `gdb`, `strace`). Opt-out ausschließlich über vertrauenswürdige User-Config `security.seccomp: off` (Invariante 9; `TestInvariant_SeccompBlocksSyscalls`, `TestInvariant_SeccompBlocksIOUring`). |
 | **E:** TIOCSTI-Terminal-Injection / Host-Kommando-Einschleusung | Hoch (P1) bei geteiltem Host-TTY | Kein geteiltes Host-Terminal: Nicht-interaktiv laufen Standard-Pipes; im interaktiven Modus allokiert der Host ein isoliertes Pseudo-Terminal (PTY Master/Slave via `openPTY()`), der Workload erhält exklusiv das Slave-Ende. `TIOCSTI`-Aufrufe im Gast verbleiben im Slave-Puffer und können das Host-TTY nicht erreichen. Ein separates `bwrap --new-session` ist daher nicht erforderlich, wodurch interaktive Job-Control/Signale (`Ctrl+C`, `SIGWINCH`) voll erhalten bleiben. |
 | **I:** Lesen von Host-Pfaden jenseits der Binds | — | **Update (M1-Umsetzung, korrigiert 2026-08-27):** Der Mountplan ist eine **Positivliste** — Binds werden ausschließlich explizit erzeugt (`/usr`, `/bin`, `/lib`, `/lib64`, selektive `/etc`-Dateien, Repo, tmpfs `/tmp` + Sandbox-HOME). Was nicht gebunden ist, **existiert nicht** in der Sandbox: Host-Home, `~/.ssh`, `~/.aws`, IPC-Sockets und der Rest des Wurzelbaums sind nicht einmal sichtbar (verifiziert durch unabhängige Agenten-Recon in einer laufenden Sandbox: `/etc` enthält nur die explizit gebundenen Dateien, der Rest des Hosts ist abwesend). Ein früherer Entwurf eines `--ro-bind / /`-Grundlayers wurde **nicht** übernommen; Overlay-Lowerdirs beziehen sich nur auf das Repo. FS-Exfiltration des Hosts entfällt damit als Risiko vollständig; Diebstahl bleibt auf den gebundenen Repo-Scope und polizeiliche Egress-Kanäle beschränkt (Invarianten 1–2). Landlock (§6.1) bleibt zweite Linie auf Syscall-Ebene für den Fall eines Mount-NS-Verlassens. — Für die verbleibende Lücke „Syscall-Angriffsfläche ohne Seccomp-Filter“ siehe WP-M8b (`docs/plans/2026-08-26.1-intial.md` §10b). |
 | **D:** Fork-Bomb / Disk-Füllung (`/tmp`-tmpfs, Layer) | Mittel | `--tmpfs --size` begrenzt tmpfs; CPU/RAM-Limits sind **Residualrisiko** (§7) |
@@ -253,7 +254,7 @@ Port-Forwards; Host-seitige Bindung ausschließlich auf `127.0.0.1`.
 | Risiko | Begründung der Akzeptanz |
 |---|---|
 | Exfiltration über legitim whitelistede Kanäle (GitHub-Push, Package-Registry-Upload) | Funktionalität erfordert diese Kanäle; Detektion via Audit-Volumen/Review |
-| Kernel-Exploits (UserNS/Mount/OverlayFS) | A1; Härtung durch `--disable-userns` + Landlock reduziert Auswirkung |
+| Kernel-Codepfade außerhalb der Blockliste (Dateisystem-, Netz-, Scheduler-Parser) | A1; klassische LPE-Primitive (eBPF, io_uring, userfaultfd, Keyring) per Seccomp gefiltert; Härtung durch `--disable-userns` + Landlock + Seccomp minimiert Auswirkung |
 | Keine CPU/RAM/Cgroup-Limits | Für Dev-Workloads akzeptiert; Noisy-Neighbor-Risiko dokumentiert |
 | Repo-deklarierte Mounts auf Host-Pfade | Semi-Trust-Modell (A3); Allowlist-Härtung geplant |
 | Cache-Poisoning bei RW-Warm-Cache | Default für Speed; `--isolate-caches` als Opt-out für misstraute Läufe |
@@ -290,6 +291,13 @@ Port-Forwards; Host-seitige Bindung ausschließlich auf `127.0.0.1`.
    Templates/Logs/API.
 8. **Aufräumen garantiert:** Lifecycle hängt an FDs/Signalen — keine
    verwaisten Prozesse, Sockets, Timer oder Secret-Reste.
+9. **Syscall-Filterung (Seccomp-BPF):** Der Workload läuft unter einem Syscall-Filter
+   (Seccomp-BPF), der die Kernel-Angriffsfläche auf das für Dev-Workloads notwendige Maß
+   reduziert (`bpf`, `io_uring_*`, `perf_event_open`, `userfaultfd`, `keyctl`
+   etc. blockiert mit `EPERM`; `ptrace` und `process_vm_readv/writev` bleiben für Debugger
+   innerhalb des isolierten PID-Namespace erlaubt). Nur die vertrauenswürdige User-Config (`security.seccomp: off`)
+   kann den Filter deaktivieren; Repo-Konfigurationen können ihn nie lockern
+   (`TestInvariant_SeccompBlocksSyscalls`, `TestInvariant_SeccompBlocksIOUring`, `TestIntegration_SeccompOffOption`).
 
 Abweichungen von diesen Invarianten sind sicherheitsrelevante Bugs und
 müssen als solche behandelt (gemeldet, gefixt, im Modell nachgezogen)

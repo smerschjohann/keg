@@ -217,6 +217,33 @@ func TestBuildArgs_TmpfsMountNeedsNoSrc(t *testing.T) {
 	}
 }
 
+func TestBuildArgs_SeccompFDAppended(t *testing.T) {
+	p := basePlan()
+	p.SeccompFD = 7
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--add-seccomp-fd 7") {
+		t.Fatalf("args missing --add-seccomp-fd 7: %v", args)
+	}
+}
+
+func TestPlan_SeccompOffPropagates(t *testing.T) {
+	p := basePlan()
+	p.Seccomp = "off"
+	p.SeccompFD = 0
+	args, err := BuildArgs(p)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--add-seccomp-fd") {
+		t.Fatalf("seccomp off must not emit --add-seccomp-fd: %v", args)
+	}
+}
+
 func TestBuildArgs_EnvUnsetBeforeSet(t *testing.T) {
 	p := basePlan()
 	p.EnvUnset = []string{"AWS_SESSION_TOKEN"}
