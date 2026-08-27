@@ -84,7 +84,7 @@ bin/keg run --inherit-all -e AWS_SESSION_TOKEN -e HTTP_PROXY -- bash
 
 #### 2. Repository-Freigabe & Trust (`keg trust`)
 
-Nicht-leere `.keg.yaml`-Dateien unterliegen dem Repository-Trust-Gate:
+Nicht-leere `.keg.yaml`-Dateien und zugehörige Trust-Anchors (z. B. `trust_anchors:` oder referenzierte `justfiles` bei delegierten Tasks) unterliegen dem Repository-Trust-Gate:
 
 ```bash
 # Aktuelle Repository-Konfiguration freigeben / genehmigen:

@@ -71,7 +71,7 @@ func TestEnsureTrust_Trusted(t *testing.T) {
 	}
 
 	// Pre-approve
-	_, _ = Approve(store, tempDir, content)
+	_, _ = Approve(store, tempDir, content, nil)
 
 	// EnsureTrust with nil stdin/stdout -> must return true immediately
 	approved, err := EnsureTrust(context.Background(), store, tempDir, cfgPath, nil, nil, nil)
@@ -190,7 +190,7 @@ func TestEnsureTrust_Changed(t *testing.T) {
 	}
 
 	// 1. Initial approve
-	sha1, _ := Approve(store, tempDir, content1)
+	sha1, _ := Approve(store, tempDir, content1, nil)
 
 	// 2. Change content
 	content2 := []byte("version: \"1\"\nenv:\n  inherit: [VAR]\n")
@@ -257,5 +257,156 @@ func TestIsTerminal(t *testing.T) {
 	}
 	if IsTerminal(nil) {
 		t.Errorf("nil should not be a terminal")
+	}
+}
+
+func TestFormatAnchorDiff(t *testing.T) {
+	t.Run("new anchor file", func(t *testing.T) {
+		newContent := "build:\n\techo test\n"
+		diff := FormatAnchorDiff("justfile", "", newContent, true)
+		if !strings.Contains(diff, "=== New trust anchor: justfile ===") {
+			t.Errorf("expected header in diff, got:\n%s", diff)
+		}
+		if !strings.Contains(diff, "+ build:") {
+			t.Errorf("expected + build: in diff, got:\n%s", diff)
+		}
+	})
+
+	t.Run("changed anchor file", func(t *testing.T) {
+		oldContent := "all:\n\techo old\n"
+		newContent := "all:\n\techo new\n"
+		diff := FormatAnchorDiff("Makefile", oldContent, newContent, false)
+		if !strings.Contains(diff, "=== Trust anchor: Makefile ===") {
+			t.Errorf("expected header in diff, got:\n%s", diff)
+		}
+		if !strings.Contains(diff, "- \techo old") || !strings.Contains(diff, "+ \techo new") {
+			t.Errorf("expected changes in diff, got:\n%s", diff)
+		}
+	})
+}
+
+func TestEnsureTrust_WithAnchors_TTY_Approve(t *testing.T) {
+	tempDir := t.TempDir()
+	store := &Store{Repos: make(map[string]Entry)}
+	cfgPath := filepath.Join(tempDir, ".keg.yaml")
+	cfgContent := []byte("version: \"1\"\ntrust_anchors:\n  - Makefile\n")
+	if err := os.WriteFile(cfgPath, cfgContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	makePath := filepath.Join(tempDir, "Makefile")
+	makeContent := []byte("all:\n\techo ok\n")
+	if err := os.WriteFile(makePath, makeContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdin := strings.NewReader("yes\n")
+	var stdout bytes.Buffer
+	isTerm := func(_ any) bool { return true }
+
+	approved, err := EnsureTrust(context.Background(), store, tempDir, cfgPath, stdin, &stdout, isTerm)
+	if !approved || err != nil {
+		t.Fatalf("EnsureTrust failed: approved=%v, err=%v", approved, err)
+	}
+
+	key := CleanRepoKey(tempDir)
+	entry := store.Repos[key]
+	makeSHA, _ := Sha256(makeContent)
+	if entry.Anchors["Makefile"].ApprovedSHA != makeSHA {
+		t.Errorf("Makefile ApprovedSHA = %q, want %q", entry.Anchors["Makefile"].ApprovedSHA, makeSHA)
+	}
+
+	// Now modify Makefile
+	newMakeContent := []byte("all:\n\techo updated\n")
+	if err := os.WriteFile(makePath, newMakeContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-run in TTY with yes -> prompts for updated Makefile
+	stdin2 := strings.NewReader("yes\n")
+	var stdout2 bytes.Buffer
+	approved2, err := EnsureTrust(context.Background(), store, tempDir, cfgPath, stdin2, &stdout2, isTerm)
+	if !approved2 || err != nil {
+		t.Fatalf("EnsureTrust second time failed: approved=%v, err=%v", approved2, err)
+	}
+	newMakeSHA, _ := Sha256(newMakeContent)
+	entry2 := store.Repos[key]
+	if entry2.Anchors["Makefile"].ApprovedSHA != newMakeSHA {
+		t.Errorf("Makefile ApprovedSHA after re-approval = %q, want %q", entry2.Anchors["Makefile"].ApprovedSHA, newMakeSHA)
+	}
+}
+
+func TestEnsureTrust_WithAnchors_NonTTY_Rejection(t *testing.T) {
+	tempDir := t.TempDir()
+	store := &Store{Repos: make(map[string]Entry)}
+	cfgPath := filepath.Join(tempDir, ".keg.yaml")
+	cfgContent := []byte("version: \"1\"\ntrust_anchors:\n  - justfile\n")
+	if err := os.WriteFile(cfgPath, cfgContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	justPath := filepath.Join(tempDir, "justfile")
+	justContent := []byte("build:\n\techo build\n")
+	if err := os.WriteFile(justPath, justContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Approve initial state
+	anchorContents := map[string][]byte{"justfile": justContent}
+	_, err := Approve(store, tempDir, cfgContent, anchorContents)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify justfile
+	modifiedJustContent := []byte("build:\n\techo malicious\n")
+	if err := os.WriteFile(justPath, modifiedJustContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	isTerm := func(_ any) bool { return false } // non-TTY
+	approved, err := EnsureTrust(context.Background(), store, tempDir, cfgPath, nil, nil, isTerm)
+	if approved {
+		t.Errorf("expected approved=false for modified anchor in non-TTY")
+	}
+	if err == nil {
+		t.Errorf("expected error for modified anchor in non-TTY, got nil")
+	}
+}
+
+func TestVerifyApproved(t *testing.T) {
+	tempDir := t.TempDir()
+	trustPath := filepath.Join(tempDir, "trust.yaml")
+	cfgPath := filepath.Join(tempDir, ".keg.yaml")
+	cfgContent := []byte("version: \"1\"\ntrust_anchors:\n  - justfile\n")
+	if err := os.WriteFile(cfgPath, cfgContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	justPath := filepath.Join(tempDir, "justfile")
+	justContent := []byte("build:\n\techo build\n")
+	if err := os.WriteFile(justPath, justContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &Store{Repos: make(map[string]Entry)}
+	_, err := Approve(store, tempDir, cfgContent, map[string][]byte{"justfile": justContent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveFile(trustPath, store); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Valid state
+	if err := VerifyApproved(trustPath, tempDir, cfgPath); err != nil {
+		t.Fatalf("VerifyApproved failed on valid state: %v", err)
+	}
+
+	// 2. Modified justfile -> error
+	if err := os.WriteFile(justPath, []byte("build:\n\tmalicious\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyApproved(trustPath, tempDir, cfgPath); err == nil {
+		t.Errorf("expected VerifyApproved error on modified justfile, got nil")
 	}
 }

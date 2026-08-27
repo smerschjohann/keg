@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -553,6 +555,152 @@ func TestParsePublishFlag(t *testing.T) {
 			if spec.Guest != tt.wantGuest || spec.Host != tt.wantHost || spec.Dynamic != tt.wantDynamic {
 				t.Errorf("ParsePublishFlag(%q) = %+v, want Guest=%d, Host=%d, Dynamic=%v",
 					tt.input, spec, tt.wantGuest, tt.wantHost, tt.wantDynamic)
+			}
+		})
+	}
+}
+
+func TestParseRepo_TrustAnchors(t *testing.T) {
+	yamlText := `
+version: "1"
+trust_anchors:
+  - justfile
+  - Makefile
+  - scripts/build.sh
+`
+	repo, err := ParseRepo([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseRepo failed: %v", err)
+	}
+	if len(repo.TrustAnchors) != 3 {
+		t.Fatalf("len(TrustAnchors) = %d, want 3", len(repo.TrustAnchors))
+	}
+	if repo.TrustAnchors[0] != "justfile" || repo.TrustAnchors[1] != "Makefile" || repo.TrustAnchors[2] != "scripts/build.sh" {
+		t.Errorf("TrustAnchors = %v", repo.TrustAnchors)
+	}
+}
+
+func TestValidateRepo_TrustAnchors_RejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name     string
+		yamlText string
+		wantErr  string
+	}{
+		{
+			name:     "empty anchor string",
+			yamlText: "version: \"1\"\ntrust_anchors: [\" \"]\n",
+			wantErr:  "empty",
+		},
+		{
+			name:     "absolute path anchor",
+			yamlText: "version: \"1\"\ntrust_anchors: [\"/etc/passwd\"]\n",
+			wantErr:  "relative",
+		},
+		{
+			name:     "path traversal parent",
+			yamlText: "version: \"1\"\ntrust_anchors: [\"../outside.sh\"]\n",
+			wantErr:  "escapes",
+		},
+		{
+			name:     "nested path traversal parent",
+			yamlText: "version: \"1\"\ntrust_anchors: [\"foo/../../outside.sh\"]\n",
+			wantErr:  "escapes",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseRepo([]byte(tt.yamlText))
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+				t.Errorf("error %q does not contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestEffectiveTrustAnchors(t *testing.T) {
+	tempDir := t.TempDir()
+	justfilePath := filepath.Join(tempDir, "justfile")
+	if err := os.WriteFile(justfilePath, []byte("build:\n\techo ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	makefilePath := filepath.Join(tempDir, "Makefile")
+	if err := os.WriteFile(makefilePath, []byte("all:\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		repo     *Repo
+		repoDir  string
+		wantList []string
+	}{
+		{
+			name:     "no anchors, no delegation",
+			repo:     &Repo{Version: "1"},
+			repoDir:  tempDir,
+			wantList: nil,
+		},
+		{
+			name: "explicit anchors",
+			repo: &Repo{
+				Version:      "1",
+				TrustAnchors: []string{"Makefile"},
+			},
+			repoDir:  tempDir,
+			wantList: []string{"Makefile"},
+		},
+		{
+			name: "auto justfile detection on exact task",
+			repo: &Repo{
+				Version: "1",
+				DelegatedTasks: DelegatedTasks{
+					Exact: []string{"build"},
+				},
+			},
+			repoDir:  tempDir,
+			wantList: []string{"justfile"},
+		},
+		{
+			name: "auto justfile detection on prefixes task",
+			repo: &Repo{
+				Version: "1",
+				DelegatedTasks: DelegatedTasks{
+					Prefixes: []string{"test-"},
+				},
+			},
+			repoDir:  tempDir,
+			wantList: []string{"justfile"},
+		},
+		{
+			name: "explicit anchor and auto justfile merged and sorted",
+			repo: &Repo{
+				Version:      "1",
+				TrustAnchors: []string{"Makefile", "justfile"},
+				DelegatedTasks: DelegatedTasks{
+					Exact: []string{"build"},
+				},
+			},
+			repoDir:  tempDir,
+			wantList: []string{"Makefile", "justfile"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EffectiveTrustAnchors(tt.repo, tt.repoDir)
+			if err != nil {
+				t.Fatalf("EffectiveTrustAnchors error: %v", err)
+			}
+			if len(got) != len(tt.wantList) {
+				t.Fatalf("len(got) = %d, want %d (got: %v, want: %v)", len(got), len(tt.wantList), got, tt.wantList)
+			}
+			for i := range got {
+				if got[i] != tt.wantList[i] {
+					t.Errorf("got[%d] = %q, want %q", i, got[i], tt.wantList[i])
+				}
 			}
 		})
 	}

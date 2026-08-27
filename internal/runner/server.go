@@ -35,6 +35,9 @@ type ServerConfig struct {
 	// with core.hooksPath pointed at it so a malicious repo cannot plant
 	// host-side hooks (THREAT_MODEL §5.4). Empty disables suppression.
 	HooksDir string
+	// ValidateTrust, if set, is invoked before each job execution to ensure
+	// trust anchors have not been modified during runtime.
+	ValidateTrust func() error
 	// Audit, if set, receives task execution decisions (allowed, task representation, reason).
 	Audit func(allowed bool, task string, reason string)
 }
@@ -87,6 +90,16 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 	if !decision.Allow {
 		writeEvent(conn, Event{Type: EventDenied, Message: decision.Reason})
 		return
+	}
+
+	if cfg.ValidateTrust != nil {
+		if err := cfg.ValidateTrust(); err != nil {
+			if cfg.Audit != nil {
+				cfg.Audit(false, strings.Join(argv, " "), fmt.Sprintf("trust verification failed: %v", err))
+			}
+			writeEvent(conn, Event{Type: EventDenied, Message: fmt.Sprintf("trust verification failed: %v", err)})
+			return
+		}
 	}
 
 	dir := cfg.RepoRoot

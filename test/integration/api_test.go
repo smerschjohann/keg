@@ -28,7 +28,7 @@ func TestIntegration_GoLibraryAPI(t *testing.T) {
 	}
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, repoDir, []byte("version: \"1\"\n"))
+	_, _ = trust.Approve(store, repoDir, []byte("version: \"1\"\n"), nil)
 	_ = trust.SaveFile(storePath, store)
 
 	var stdoutBuf, stderrBuf bytes.Buffer

@@ -36,7 +36,7 @@ func writeFile(t *testing.T, path, content string) {
 	if filepath.Base(path) == ".keg.yaml" || strings.HasSuffix(path, ".yaml") {
 		storePath := trust.DefaultTrustPath()
 		store, _ := trust.LoadFile(storePath)
-		_, _ = trust.Approve(store, filepath.Dir(path), []byte(content))
+		_, _ = trust.Approve(store, filepath.Dir(path), []byte(content), nil)
 		_ = trust.SaveFile(storePath, store)
 	}
 }
@@ -150,7 +150,7 @@ func TestBuildRunPlan_ExplicitConfigPathWins(t *testing.T) {
 
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, dir, []byte("version: \"1\"\n"))
+	_, _ = trust.Approve(store, dir, []byte("version: \"1\"\n"), nil)
 	_ = trust.SaveFile(storePath, store)
 
 	plan, err := buildRunPlan(dir, custom, "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")

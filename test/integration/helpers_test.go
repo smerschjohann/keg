@@ -57,7 +57,7 @@ func runInSandboxWithConfig(
 	}
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, dir, []byte(cfgContent))
+	_, _ = trust.Approve(store, dir, []byte(cfgContent), nil)
 	_ = trust.SaveFile(storePath, store)
 	tmpDir := t.TempDir()
 

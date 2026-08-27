@@ -20,12 +20,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Entry records the current and approved state of a repository configuration.
+// AnchorEntry records the current and approved state of an individual trust anchor file.
+type AnchorEntry struct {
+	CurrentSHA      string `yaml:"current_sha"`
+	ApprovedSHA     string `yaml:"approved_sha"`
+	ApprovedContent string `yaml:"approved_content"`
+}
+
+// Entry records the current and approved state of a repository configuration and its anchors.
 type Entry struct {
-	CurrentSHA      string    `yaml:"current_sha"`
-	ApprovedSHA     string    `yaml:"approved_sha"`
-	ApprovedContent string    `yaml:"approved_content"`
-	Updated         time.Time `yaml:"updated"`
+	CurrentSHA      string                 `yaml:"current_sha"`
+	ApprovedSHA     string                 `yaml:"approved_sha"`
+	ApprovedContent string                 `yaml:"approved_content"`
+	Anchors         map[string]AnchorEntry `yaml:"anchors,omitempty"`
+	Updated         time.Time              `yaml:"updated"`
 }
 
 // Store holds the approval records for all known repositories keyed by realpath.
@@ -167,14 +175,24 @@ func SaveFile(path string, store *Store) error {
 	return nil
 }
 
-// IsTrusted reports whether entry is approved for currentSHA.
-func IsTrusted(e Entry, currentSHA string) bool {
-	return e.ApprovedSHA != "" && currentSHA != "" && e.ApprovedSHA == currentSHA
+// IsTrusted reports whether entry is approved for currentSHA and all given anchorSHAs.
+func IsTrusted(e Entry, currentSHA string, anchorSHAs map[string]string) bool {
+	if e.ApprovedSHA == "" || currentSHA == "" || e.ApprovedSHA != currentSHA {
+		return false
+	}
+	for relPath, aSHA := range anchorSHAs {
+		a, ok := e.Anchors[relPath]
+		if !ok || a.ApprovedSHA == "" || a.ApprovedSHA != aSHA {
+			return false
+		}
+	}
+	return true
 }
 
-// NoteCurrent calculates the SHA of content and updates CurrentSHA and Updated for repoPath.
-// It returns whether the CurrentSHA has changed and does not modify ApprovedSHA or ApprovedContent.
-func NoteCurrent(store *Store, repoPath string, content []byte) (bool, error) {
+// NoteCurrent calculates the SHA of content and any anchorContents, and updates
+// CurrentSHA and Updated for repoPath.
+// It returns whether CurrentSHA or any anchor CurrentSHA has changed.
+func NoteCurrent(store *Store, repoPath string, content []byte, anchorContents map[string][]byte) (bool, error) {
 	sha, err := Sha256(content)
 	if err != nil {
 		return false, err
@@ -186,18 +204,39 @@ func NoteCurrent(store *Store, repoPath string, content []byte) (bool, error) {
 	existing, exists := store.Repos[key]
 	changed := !exists || existing.CurrentSHA != sha
 
+	anchors := make(map[string]AnchorEntry)
+	for k, v := range existing.Anchors {
+		anchors[k] = v
+	}
+	for relPath, aBytes := range anchorContents {
+		aSHA, aErr := Sha256(aBytes)
+		if aErr != nil {
+			return false, fmt.Errorf("hash anchor %s: %w", relPath, aErr)
+		}
+		existingA, hasA := existing.Anchors[relPath]
+		if !hasA || existingA.CurrentSHA != aSHA {
+			changed = true
+		}
+		anchors[relPath] = AnchorEntry{
+			CurrentSHA:      aSHA,
+			ApprovedSHA:     existingA.ApprovedSHA,
+			ApprovedContent: existingA.ApprovedContent,
+		}
+	}
+
 	store.Repos[key] = Entry{
 		CurrentSHA:      sha,
 		ApprovedSHA:     existing.ApprovedSHA,
 		ApprovedContent: existing.ApprovedContent,
+		Anchors:         anchors,
 		Updated:         time.Now().UTC(),
 	}
 	return changed, nil
 }
 
-// Approve calculates the SHA of content, sets ApprovedSHA and ApprovedContent equal to the
-// current content, and returns the approved SHA.
-func Approve(store *Store, repoPath string, content []byte) (string, error) {
+// Approve calculates the SHA of content and anchorContents, sets ApprovedSHA and ApprovedContent
+// equal to the current content for config and all anchors, and returns the approved config SHA.
+func Approve(store *Store, repoPath string, content []byte, anchorContents map[string][]byte) (string, error) {
 	sha, err := Sha256(content)
 	if err != nil {
 		return "", err
@@ -206,16 +245,34 @@ func Approve(store *Store, repoPath string, content []byte) (string, error) {
 	if store.Repos == nil {
 		store.Repos = make(map[string]Entry)
 	}
+	existing := store.Repos[key]
+	anchors := make(map[string]AnchorEntry)
+	for k, v := range existing.Anchors {
+		anchors[k] = v
+	}
+	for relPath, aBytes := range anchorContents {
+		aSHA, aErr := Sha256(aBytes)
+		if aErr != nil {
+			return "", fmt.Errorf("hash anchor %s: %w", relPath, aErr)
+		}
+		anchors[relPath] = AnchorEntry{
+			CurrentSHA:      aSHA,
+			ApprovedSHA:     aSHA,
+			ApprovedContent: string(aBytes),
+		}
+	}
+
 	store.Repos[key] = Entry{
 		CurrentSHA:      sha,
 		ApprovedSHA:     sha,
 		ApprovedContent: string(content),
+		Anchors:         anchors,
 		Updated:         time.Now().UTC(),
 	}
 	return sha, nil
 }
 
-// Revoke clears ApprovedSHA and ApprovedContent for repoPath.
+// Revoke clears ApprovedSHA and ApprovedContent for repoPath and all its anchors.
 func Revoke(store *Store, repoPath string) {
 	key := CleanRepoKey(repoPath)
 	if store.Repos == nil {
@@ -225,10 +282,19 @@ func Revoke(store *Store, repoPath string) {
 	if !exists {
 		return
 	}
+	anchors := make(map[string]AnchorEntry, len(existing.Anchors))
+	for relPath, a := range existing.Anchors {
+		anchors[relPath] = AnchorEntry{
+			CurrentSHA:      a.CurrentSHA,
+			ApprovedSHA:     "",
+			ApprovedContent: "",
+		}
+	}
 	store.Repos[key] = Entry{
 		CurrentSHA:      existing.CurrentSHA,
 		ApprovedSHA:     "",
 		ApprovedContent: "",
+		Anchors:         anchors,
 		Updated:         time.Now().UTC(),
 	}
 }

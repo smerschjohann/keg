@@ -201,7 +201,7 @@ func TestTrustIsTrusted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsTrusted(tt.entry, tt.currentSHA)
+			got := IsTrusted(tt.entry, tt.currentSHA, nil)
 			if got != tt.want {
 				t.Errorf("IsTrusted() = %v, want %v", got, tt.want)
 			}
@@ -215,7 +215,7 @@ func TestTrustNoteCurrent(t *testing.T) {
 	content1 := []byte("version: \"1\"\n")
 	sha1, _ := Sha256(content1)
 
-	changed, err := NoteCurrent(store, repoPath, content1)
+	changed, err := NoteCurrent(store, repoPath, content1, nil)
 	if err != nil {
 		t.Fatalf("NoteCurrent failed: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestTrustNoteCurrent(t *testing.T) {
 	}
 
 	// Calling again with same content -> changed=false
-	changed2, err := NoteCurrent(store, repoPath, content1)
+	changed2, err := NoteCurrent(store, repoPath, content1, nil)
 	if err != nil {
 		t.Fatalf("NoteCurrent second time failed: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestTrustNoteCurrent(t *testing.T) {
 	// Calling with modified content -> changed=true
 	content2 := []byte("version: \"1\"\nenv:\n  inherit: [FOO]\n")
 	sha2, _ := Sha256(content2)
-	changed3, err := NoteCurrent(store, repoPath, content2)
+	changed3, err := NoteCurrent(store, repoPath, content2, nil)
 	if err != nil {
 		t.Fatalf("NoteCurrent with new content failed: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestTrustApprove(t *testing.T) {
 	content := []byte("version: \"1\"\n")
 	sha, _ := Sha256(content)
 
-	approvedSHA, err := Approve(store, repoPath, content)
+	approvedSHA, err := Approve(store, repoPath, content, nil)
 	if err != nil {
 		t.Fatalf("Approve failed: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestTrustApprove(t *testing.T) {
 	if entry.ApprovedContent != string(content) {
 		t.Errorf("entry.ApprovedContent = %q, want %q", entry.ApprovedContent, string(content))
 	}
-	if !IsTrusted(entry, sha) {
+	if !IsTrusted(entry, sha, nil) {
 		t.Errorf("entry should be trusted")
 	}
 }
@@ -288,7 +288,7 @@ func TestTrustRevoke(t *testing.T) {
 	store := &Store{Repos: make(map[string]Entry)}
 	repoPath := "/path/to/repo"
 	content := []byte("version: \"1\"\n")
-	_, _ = Approve(store, repoPath, content)
+	_, _ = Approve(store, repoPath, content, nil)
 
 	Revoke(store, repoPath)
 	entry := store.Repos[repoPath]
@@ -301,25 +301,199 @@ func TestApproveThenNoteChange(t *testing.T) {
 	store := &Store{Repos: make(map[string]Entry)}
 	repoPath := "/path/to/repo"
 	content1 := []byte("version: \"1\"\n")
-	_, err := Approve(store, repoPath, content1)
+	_, err := Approve(store, repoPath, content1, nil)
 	if err != nil {
 		t.Fatalf("Approve failed: %v", err)
 	}
 
 	entry := store.Repos[repoPath]
-	if !IsTrusted(entry, entry.CurrentSHA) {
+	if !IsTrusted(entry, entry.CurrentSHA, nil) {
 		t.Fatalf("expected entry to be trusted right after approve")
 	}
 
 	// Now modify repo content and NoteCurrent
 	content2 := []byte("version: \"1\"\nenv:\n  inherit: [BAR]\n")
-	_, err = NoteCurrent(store, repoPath, content2)
+	_, err = NoteCurrent(store, repoPath, content2, nil)
 	if err != nil {
 		t.Fatalf("NoteCurrent failed: %v", err)
 	}
 
 	entryAfter := store.Repos[repoPath]
-	if IsTrusted(entryAfter, entryAfter.CurrentSHA) {
+	if IsTrusted(entryAfter, entryAfter.CurrentSHA, nil) {
 		t.Errorf("entry should NOT be trusted after content change, but IsTrusted was true")
+	}
+}
+
+func TestTrustLoadSave_WithAnchors(t *testing.T) {
+	tempDir := t.TempDir()
+	trustFile := filepath.Join(tempDir, "trust_anchors.yaml")
+	now := time.Date(2026, 8, 27, 16, 0, 0, 0, time.UTC)
+
+	store := &Store{
+		Repos: map[string]Entry{
+			"/repo/anchored": {
+				CurrentSHA:      "sha-cfg",
+				ApprovedSHA:     "sha-cfg",
+				ApprovedContent: "version: \"1\"\n",
+				Anchors: map[string]AnchorEntry{
+					"Makefile": {
+						CurrentSHA:      "sha-make",
+						ApprovedSHA:     "sha-make",
+						ApprovedContent: "all:\n",
+					},
+					"justfile": {
+						CurrentSHA:      "sha-just",
+						ApprovedSHA:     "sha-just",
+						ApprovedContent: "build:\n",
+					},
+				},
+				Updated: now,
+			},
+		},
+	}
+
+	if err := SaveFile(trustFile, store); err != nil {
+		t.Fatalf("SaveFile failed: %v", err)
+	}
+
+	loaded, err := LoadFile(trustFile)
+	if err != nil {
+		t.Fatalf("LoadFile failed: %v", err)
+	}
+	entry, ok := loaded.Repos["/repo/anchored"]
+	if !ok {
+		t.Fatalf("missing repo entry in loaded store")
+	}
+	if len(entry.Anchors) != 2 {
+		t.Fatalf("len(entry.Anchors) = %d, want 2", len(entry.Anchors))
+	}
+	if entry.Anchors["Makefile"].ApprovedSHA != "sha-make" {
+		t.Errorf("Makefile ApprovedSHA = %q, want sha-make", entry.Anchors["Makefile"].ApprovedSHA)
+	}
+	if entry.Anchors["justfile"].ApprovedSHA != "sha-just" {
+		t.Errorf("justfile ApprovedSHA = %q, want sha-just", entry.Anchors["justfile"].ApprovedSHA)
+	}
+}
+
+func TestTrustIsTrusted_WithAnchors(t *testing.T) {
+	entry := Entry{
+		CurrentSHA:  "cfg-sha",
+		ApprovedSHA: "cfg-sha",
+		Anchors: map[string]AnchorEntry{
+			"justfile": {
+				CurrentSHA:  "just-sha",
+				ApprovedSHA: "just-sha",
+			},
+			"Makefile": {
+				CurrentSHA:  "make-sha",
+				ApprovedSHA: "make-sha",
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		cfgSHA     string
+		anchorSHAs map[string]string
+		want       bool
+	}{
+		{
+			name:       "matching all",
+			cfgSHA:     "cfg-sha",
+			anchorSHAs: map[string]string{"justfile": "just-sha", "Makefile": "make-sha"},
+			want:       true,
+		},
+		{
+			name:       "cfg modified",
+			cfgSHA:     "cfg-sha-mod",
+			anchorSHAs: map[string]string{"justfile": "just-sha", "Makefile": "make-sha"},
+			want:       false,
+		},
+		{
+			name:       "one anchor modified",
+			cfgSHA:     "cfg-sha",
+			anchorSHAs: map[string]string{"justfile": "just-sha-mod", "Makefile": "make-sha"},
+			want:       false,
+		},
+		{
+			name:       "missing anchor in store",
+			cfgSHA:     "cfg-sha",
+			anchorSHAs: map[string]string{"justfile": "just-sha", "scripts/deploy.sh": "dep-sha"},
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsTrusted(entry, tt.cfgSHA, tt.anchorSHAs)
+			if got != tt.want {
+				t.Errorf("IsTrusted() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTrustNoteCurrentAndApprove_WithAnchors(t *testing.T) {
+	store := &Store{Repos: make(map[string]Entry)}
+	repoPath := "/path/to/repo"
+	cfgBytes := []byte("version: \"1\"\n")
+	makeBytes := []byte("all:\n\techo make\n")
+	justBytes := []byte("build:\n\techo just\n")
+
+	anchorContents := map[string][]byte{
+		"Makefile": makeBytes,
+		"justfile": justBytes,
+	}
+
+	// 1. NoteCurrent for brand new repo + anchors
+	changed, err := NoteCurrent(store, repoPath, cfgBytes, anchorContents)
+	if err != nil {
+		t.Fatalf("NoteCurrent failed: %v", err)
+	}
+	if !changed {
+		t.Errorf("NoteCurrent on new repo should be changed=true")
+	}
+
+	entry := store.Repos[repoPath]
+	if len(entry.Anchors) != 2 {
+		t.Fatalf("len(entry.Anchors) = %d, want 2", len(entry.Anchors))
+	}
+	if entry.ApprovedSHA != "" || entry.Anchors["Makefile"].ApprovedSHA != "" {
+		t.Errorf("expected empty approved SHAs before approve")
+	}
+
+	// 2. Approve
+	approvedSHA, err := Approve(store, repoPath, cfgBytes, anchorContents)
+	if err != nil {
+		t.Fatalf("Approve failed: %v", err)
+	}
+	cfgSHA, _ := Sha256(cfgBytes)
+	if approvedSHA != cfgSHA {
+		t.Errorf("Approve returned %q, want %q", approvedSHA, cfgSHA)
+	}
+
+	entryAfterApprove := store.Repos[repoPath]
+	makeSHA, _ := Sha256(makeBytes)
+	justSHA, _ := Sha256(justBytes)
+	if entryAfterApprove.Anchors["Makefile"].ApprovedSHA != makeSHA {
+		t.Errorf("Makefile ApprovedSHA = %q, want %q", entryAfterApprove.Anchors["Makefile"].ApprovedSHA, makeSHA)
+	}
+	if entryAfterApprove.Anchors["justfile"].ApprovedSHA != justSHA {
+		t.Errorf("justfile ApprovedSHA = %q, want %q", entryAfterApprove.Anchors["justfile"].ApprovedSHA, justSHA)
+	}
+
+	anchorSHAs := map[string]string{
+		"Makefile": makeSHA,
+		"justfile": justSHA,
+	}
+	if !IsTrusted(entryAfterApprove, cfgSHA, anchorSHAs) {
+		t.Errorf("entry must be trusted after Approve")
+	}
+
+	// 3. Revoke
+	Revoke(store, repoPath)
+	entryAfterRevoke := store.Repos[repoPath]
+	if entryAfterRevoke.ApprovedSHA != "" || entryAfterRevoke.Anchors["Makefile"].ApprovedSHA != "" {
+		t.Errorf("Revoke should clear all ApprovedSHA fields")
 	}
 }

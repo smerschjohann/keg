@@ -156,6 +156,7 @@ TB2.
 | **T/I:** Argument-Manipulation (Shell-Injection über Job-Argumente) | Mittel | Parameter reisen strukturiert (Length-Prefix-JSON, b64-Framing) und werden **direkt exec'd, nie durch eine Shell** geschickt |
 | **Path Traversal** (`--workdir ../../…`) | Mittel | Pfad-Jail: Jobs laufen nur unter dem Host-Repo-Root |
 | **I:** Git-Hook-Ausführung auf dem Host ⚠︎ | **Mittel–hoch** | Delegierte `git commit/-merge/…` können **Host-seitige Hooks** (`.git/hooks/`, `core.hooksPath`) ausführen — ein bösartiges Repo kann dort Code platzieren. Gegenmaßnahmen: Runner setzt `git -c core.hooksPath=/dev/null` (bzw. leeres Hooks-Dir) für delegierte Git-Jobs; dokumentierte Restriktion, dass Hook-abhängige Workflows manuell laufen müssen |
+| **I/E:** Manipulation von `justfile` oder Trust-Anchor-Dateien bei Host-Delegation | **Hoch** | Werden Just-Rezepte delegiert oder Dateien in `trust_anchors` deklariert, erfasst das Trust-Gate neben `.keg.yaml` alle Anchor-Dateien kryptografisch im Trust-Store (`trust.yaml`). Änderungen an beliebigen Trust-Anchors invalidieren den Trust und fordern Bestätigung via `keg trust` |
 | **D:** Job hängt/Blockade des Runners | Niedrig | Live-Streaming, Signal-Handler killt Jobs bei Sandbox-Exit |
 | **R:** Bestreiten delegierter Aktionen | Mittel | Audit pro Job: Task, Args (gekürzt), Exit-Code, UID via `SO_PEERCRED` bei API-Nutzung |
 
@@ -274,9 +275,10 @@ Port-Forwards; Host-seitige Bindung ausschließlich auf `127.0.0.1`.
    Gesperrte Sicherheitsvariablen (`HTTP_PROXY`, `AWS_SESSION_TOKEN`, API-Keys etc.) können
    über `inherit` oder `inherit_all` niemals aus dem Host-Env übernommen werden.
 3. **Repository-Trust-Gate:** Nicht-leere Repository-Konfigurationen (`.keg.yaml`)
-   werden vor Ausführung kryptografisch (SHA-256) gegen den lokalen Trust-Store
-   geprüft. Unbestätigte oder geänderte Konfigurationen erfordern eine explizite
-   Zustimmung des Benutzers.
+   sowie alle zugehörigen Trust-Anchor-Dateien (z. B. `justfiles` bei delegierten Just-Tasks
+   oder via `trust_anchors` deklarierte Dateien) werden vor Ausführung kryptografisch
+   (SHA-256) gegen den lokalen Trust-Store geprüft. Unbestätigte oder geänderte
+   Konfigurationen bzw. Trust-Anchors erfordern eine explizite Zustimmung des Benutzers.
 4. **Isolation nur verschärft:** Repo-Config kann bwrap nie lockern;
    Isolation-schwächende Flags brauchen User-Config-Freigabe.
 5. **Ausführung braucht User-Config:** Programmausführung zur Werte-

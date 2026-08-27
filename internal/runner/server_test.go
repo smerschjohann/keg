@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -379,7 +380,7 @@ echo "A:$1"; sleep 0.2; echo "B:$1"; echo "E:$1" >&2; exit 7
 		if _, err := stream.Write(mustFrame(encodeReq([]string{name, name}, ""))); err != nil {
 			t.Fatalf("send request: %v", err)
 		}
-		defer stream.Close() //nolint:errcheck -- test stream
+		defer func() { _ = stream.Close() }()
 		return classify(readEvents(t, stream))
 	}
 	var wg sync.WaitGroup
@@ -532,4 +533,49 @@ func TestServer_Audit(t *testing.T) {
 	if audits[1].allowed || !strings.Contains(audits[1].task, "forbidden-job") {
 		t.Errorf("audit 1 = %+v, want denied forbidden-job", audits[1])
 	}
+}
+
+func TestServer_ValidateTrustGate(t *testing.T) {
+	trustValid := true
+	cfg := ServerConfig{
+		Engine:   baseEngine(t),
+		JustBin:  fakeJustBin(t),
+		RepoRoot: t.TempDir(),
+		ValidateTrust: func() error {
+			if !trustValid {
+				return errors.New("justfile modified during runtime")
+			}
+			return nil
+		},
+	}
+
+	client, server := pipeSessions(t)
+	go func() { _ = ServeSession(server, cfg) }()
+
+	// 1. When trust is valid -> succeeds (exit 0)
+	stream1 := openStream(t, client)
+	if _, err := stream1.Write(mustFrame(encodeReq([]string{"test-playwright", "foo"}, ""))); err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	res1 := classify(readEvents(t, stream1))
+	if res1.code != 0 {
+		t.Fatalf("exit code = %d, want 0", res1.code)
+	}
+	_ = stream1.Close()
+
+	// 2. When trust is invalidated during runtime -> denied (exit 126)
+	trustValid = false
+	stream2 := openStream(t, client)
+	if _, err := stream2.Write(mustFrame(encodeReq([]string{"test-playwright", "foo"}, ""))); err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	res2 := classify(readEvents(t, stream2))
+	if res2.code != 126 {
+		t.Fatalf("exit code = %d (errMsg=%q, denied=%q), want 126", res2.code, res2.errMsg, res2.denied)
+	}
+	if !strings.Contains(res2.denied, "justfile modified during runtime") {
+		t.Errorf("expected denial message to mention justfile modified, got %q", res2.denied)
+	}
+	_ = stream2.Close()
+	_ = client.Close()
 }

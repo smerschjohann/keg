@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -189,6 +191,7 @@ type Repo struct {
 	Ports          []PortSpec        `yaml:"ports"`
 	Network        Network           `yaml:"network"`
 	DelegatedTasks DelegatedTasks    `yaml:"delegated_tasks"`
+	TrustAnchors   []string          `yaml:"trust_anchors"`
 }
 
 // Paths are machine-local base directories (user config only).
@@ -400,10 +403,59 @@ func (r *Repo) validate() error {
 			return fmt.Errorf("repo config: network.dns.hosts[%s]: empty target", name)
 		}
 	}
+	for i, anchor := range r.TrustAnchors {
+		trimmed := strings.TrimSpace(anchor)
+		if trimmed == "" {
+			return fmt.Errorf("repo config: trust_anchors[%d]: empty path", i)
+		}
+		if filepath.IsAbs(trimmed) {
+			return fmt.Errorf("repo config: trust_anchors[%d] %q: path must be relative to repository root", i, anchor)
+		}
+		cleaned := filepath.Clean(trimmed)
+		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("repo config: trust_anchors[%d] %q: path escapes repository root", i, anchor)
+		}
+	}
 	if err := r.Env.validate("repo config"); err != nil {
 		return err
 	}
 	return nil
+}
+
+// EffectiveTrustAnchors computes the full, sorted, and deduplicated list of relative
+// trust anchor paths for a repository. If exact or prefix delegated tasks are defined
+// and a justfile exists in repoDir, it is automatically included if not already present.
+func EffectiveTrustAnchors(r *Repo, repoDir string) ([]string, error) {
+	if r == nil {
+		return nil, nil
+	}
+	seen := make(map[string]bool)
+	var list []string
+
+	for _, a := range r.TrustAnchors {
+		cleaned := filepath.Clean(strings.TrimSpace(a))
+		if cleaned != "" && !seen[cleaned] {
+			seen[cleaned] = true
+			list = append(list, cleaned)
+		}
+	}
+
+	// Auto-detect justfile if delegated tasks use just
+	if len(r.DelegatedTasks.Exact) > 0 || len(r.DelegatedTasks.Prefixes) > 0 {
+		for _, name := range []string{"justfile", "Justfile", ".justfile"} {
+			p := filepath.Join(repoDir, name)
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				if !seen[name] {
+					seen[name] = true
+					list = append(list, name)
+				}
+				break
+			}
+		}
+	}
+
+	slices.Sort(list)
+	return list, nil
 }
 
 func (e *EnvSpec) validate(prefix string) error {

@@ -24,7 +24,7 @@ func writeFile(t *testing.T, path string) {
 	}
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, filepath.Dir(path), content)
+	_, _ = trust.Approve(store, filepath.Dir(path), content, nil)
 	_ = trust.SaveFile(storePath, store)
 }
 

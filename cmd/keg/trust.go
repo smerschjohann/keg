@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/trust"
 
 	"github.com/urfave/cli/v3"
@@ -63,6 +64,30 @@ func trustAction(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
+	repoCfg, _ := config.ParseRepo(data)
+	anchors, _ := config.EffectiveTrustAnchors(repoCfg, repoDir)
+
+	anchorContents := make(map[string][]byte)
+	anchorSHAs := make(map[string]string)
+	for _, relPath := range anchors {
+		p := filepath.Join(repoDir, relPath)
+		aBytes, aErr := os.ReadFile(p) // #nosec G304,G703 -- anchor file resolution
+		if aErr != nil {
+			if errors.Is(aErr, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("read trust anchor %s: %w", p, aErr)
+		}
+		if len(aBytes) > 0 {
+			aSHA, shaErr := trust.Sha256(aBytes)
+			if shaErr != nil {
+				return shaErr
+			}
+			anchorContents[relPath] = aBytes
+			anchorSHAs[relPath] = aSHA
+		}
+	}
+
 	trustPath := trust.Path("")
 	store, err := trust.LoadFile(trustPath)
 	if err != nil {
@@ -74,14 +99,29 @@ func trustAction(ctx context.Context, c *cli.Command) error {
 	if c.Bool("status") {
 		entry, exists := store.Repos[key]
 		if !exists || entry.ApprovedSHA == "" {
-			_, _ = fmt.Fprintf(c.Writer, "Status: NONE\nChecksum: %s\n", sha)
+			_, _ = fmt.Fprintf(c.Writer, "Status: NONE\nChecksum (.keg.yaml): %s\n", sha)
+			for _, relPath := range anchors {
+				if aSHA, ok := anchorSHAs[relPath]; ok {
+					_, _ = fmt.Fprintf(c.Writer, "Checksum (%s): %s\n", relPath, aSHA)
+				}
+			}
 			return nil
 		}
-		if entry.ApprovedSHA == sha {
-			_, _ = fmt.Fprintf(c.Writer, "Status: TRUSTED\nChecksum: %s\n", sha)
+		if trust.IsTrusted(entry, sha, anchorSHAs) {
+			_, _ = fmt.Fprintf(c.Writer, "Status: TRUSTED\nChecksum (.keg.yaml): %s\n", sha)
+			for _, relPath := range anchors {
+				if aSHA, ok := anchorSHAs[relPath]; ok {
+					_, _ = fmt.Fprintf(c.Writer, "Checksum (%s): %s\n", relPath, aSHA)
+				}
+			}
 			return nil
 		}
-		_, _ = fmt.Fprintf(c.Writer, "Status: CHANGED\nChecksum: %s\n", sha)
+		_, _ = fmt.Fprintf(c.Writer, "Status: CHANGED\nChecksum (.keg.yaml): %s\n", sha)
+		for _, relPath := range anchors {
+			if aSHA, ok := anchorSHAs[relPath]; ok {
+				_, _ = fmt.Fprintf(c.Writer, "Checksum (%s): %s\n", relPath, aSHA)
+			}
+		}
 		return nil
 	}
 
@@ -94,13 +134,18 @@ func trustAction(ctx context.Context, c *cli.Command) error {
 		return nil
 	}
 
-	approvedSHA, err := trust.Approve(store, repoDir, data)
+	approvedSHA, err := trust.Approve(store, repoDir, data, anchorContents)
 	if err != nil {
 		return err
 	}
 	if err := trust.SaveFile(trustPath, store); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(c.Writer, "Approved configuration for %s\nChecksum: %s\n", repoDir, approvedSHA)
+	_, _ = fmt.Fprintf(c.Writer, "Approved configuration for %s\nChecksum (.keg.yaml): %s\n", repoDir, approvedSHA)
+	for _, relPath := range anchors {
+		if aSHA, ok := anchorSHAs[relPath]; ok {
+			_, _ = fmt.Fprintf(c.Writer, "Checksum (%s): %s\n", relPath, aSHA)
+		}
+	}
 	return nil
 }

@@ -342,6 +342,14 @@ if [ "{{in_sandbox}}" = "1" ]; then
 fi
 ```
 
+Werden in `.keg.yaml` Just-Tasks delegiert (`delegated_tasks.exact` oder
+`delegated_tasks.prefixes`) oder zusätzliche Dateien in `trust_anchors`
+definiert, merkt sich das Trust-Gate neben der `.keg.yaml` alle
+zugehörigen Trust-Anchor-Dateien (wie das `justfile`, `Makefile`, Build-Scripts etc.)
+in der Trust-Datei (`trust.yaml`). Dadurch werden unbemerkte Änderungen an Rezepten
+oder Skripten, die außerhalb der Sandbox auf dem Host ausgeführt werden,
+zuverlässig erkannt und blockiert.
+
 ### 4.6 Mounts, Overlays & Templates
 
 #### Basis-Binds (immer)
@@ -742,13 +750,21 @@ env:
     AI_TOKEN: '{{ .Vars.ai_token | default "" }}'
     MOCK_URL: 'http://mock.localhost.test:{{ .Vars.mock_port }}'
 
-# Repository-Trust-Gate:
+# Repository-Trust-Gate & Trust-Anchors:
 # Um zu verhindern, dass bösartige oder manipulierte Repositories ungefragt
-# Host-Variablen anfordern oder die Sandbox-Konfiguration manipulieren, prüft
-# keg — Kernel-isolated Execution with Gateways jede nicht-leere .keg.yaml gegen den lokalen Trust-Store
-# (~/.config/keg/trust.yaml). Neue oder geänderte Konfigurationen
-# erfordern eine Freigabe (interaktiv via TTY-Prompt mit Diff oder via
-# `keg trust`).
+# Host-Variablen anfordern, schädliche Host-Tasks ausführen oder die
+# Sandbox-Konfiguration manipulieren, prüft keg jede nicht-leere .keg.yaml
+# sowie alle definierten Trust-Anchor-Dateien (z. B. via `trust_anchors:` oder
+# automatischer Justfile-Erkennung) gegen den lokalen Trust-Store
+# (~/.config/keg/trust.yaml). Neue oder geänderte Konfigurationen bzw.
+# Anchor-Dateien erfordern eine Freigabe (interaktiv via TTY-Prompt mit Diff
+# oder via `keg trust`).
+
+# Optionale zusätzliche Trust-Anchors (Dateien im Repo, deren Integrität
+# vor dem Start kryptografisch verifiziert werden muss):
+trust_anchors:
+  - Makefile
+  - scripts/prepare-host.sh
 
 # Rohe Zusatz-Argumente für den generierten bwrap-Aufruf (Stringliste,
 # template-bar). Werden NACH allen abgeleiteten Argumenten angehängt und

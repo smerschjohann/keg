@@ -565,7 +565,7 @@ func approveRepo(t *testing.T, repoDir string, content []byte) {
 	t.Helper()
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, repoDir, content)
+	_, _ = trust.Approve(store, repoDir, content, nil)
 	_ = trust.SaveFile(storePath, store)
 }
 
@@ -803,7 +803,7 @@ func TestBuildPlan_TrustGate(t *testing.T) {
 	// 2. Trust the repo config
 	trustStorePath := filepath.Join(trustDir, "keg", "trust.yaml")
 	store, _ := trust.LoadFile(trustStorePath)
-	_, err = trust.Approve(store, repoDir, cfgContent)
+	_, err = trust.Approve(store, repoDir, cfgContent, nil)
 	if err != nil {
 		t.Fatalf("Approve failed: %v", err)
 	}

@@ -40,6 +40,42 @@ func FormatDiff(oldContent, newContent string, isNew bool) string {
 	return b.String()
 }
 
+// FormatAnchorDiff returns a human-readable diff for a trust anchor file.
+// When isNew is true, it displays the whole new anchor content as newly added.
+func FormatAnchorDiff(relPath, oldContent, newContent string, isNew bool) string {
+	if isNew {
+		var b strings.Builder
+		b.WriteString("=== New trust anchor: " + relPath + " ===\n")
+		if strings.TrimSpace(newContent) != "" {
+			for _, line := range strings.Split(strings.TrimRight(newContent, "\n"), "\n") {
+				b.WriteString("+ ")
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
+		return b.String()
+	}
+
+	var oldLines []string
+	if strings.TrimSpace(oldContent) != "" {
+		oldLines = strings.Split(strings.TrimRight(oldContent, "\n"), "\n")
+	}
+	var newLines []string
+	if strings.TrimSpace(newContent) != "" {
+		newLines = strings.Split(strings.TrimRight(newContent, "\n"), "\n")
+	}
+
+	var b strings.Builder
+	b.WriteString("=== Trust anchor: " + relPath + " ===\n")
+	b.WriteString("--- approved\n")
+	b.WriteString("+++ current\n")
+	for _, line := range computeLCSDiff(oldLines, newLines) {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func computeLCSDiff(a, b []string) []string {
 	m, n := len(a), len(b)
 	dp := make([][]int, m+1)

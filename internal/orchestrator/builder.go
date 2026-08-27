@@ -143,6 +143,7 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 
 	plan := Plan{
 		RepoRoot:      root,
+		RepoCfgPath:   cfgPath,
 		SandboxHome:   "/home/sandbox",
 		Mounts:        expandedMounts,
 		EnvUnset:      mergedEnv.Unset,
@@ -484,10 +485,17 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 		if engineErr != nil {
 			return fmt.Errorf("delegation whitelist: %w", engineErr)
 		}
+		runnerCfgPath := plan.RepoCfgPath
+		if runnerCfgPath == "" {
+			runnerCfgPath = filepath.Join(plan.RepoRoot, ".keg.yaml")
+		}
 		serverCfg := runner.ServerConfig{
 			Engine:   engine,
 			RepoRoot: plan.RepoRoot,
 			HooksDir: plan.HooksDir,
+			ValidateTrust: func() error {
+				return trust.VerifyApproved("", plan.RepoRoot, runnerCfgPath)
+			},
 		}
 		if auditWriter != nil {
 			serverCfg.Audit = func(allowed bool, task string, reason string) {

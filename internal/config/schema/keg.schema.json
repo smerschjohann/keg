@@ -67,6 +67,13 @@
     "delegated_tasks": {
       "$ref": "#/definitions/DelegatedTasks",
       "description": "Host-only task whitelist for delegation from inside the sandbox via 'just delegate' or raw execution."
+    },
+    "trust_anchors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional list of files within the repository to track cryptographically as trust anchors alongside .keg.yaml."
     }
   },
   "definitions": {

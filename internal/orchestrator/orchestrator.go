@@ -98,6 +98,7 @@ var weakBwrapFlags = []string{
 // resolved and template-expanded by the caller.
 type Plan struct {
 	RepoRoot    string // host == sandbox path of the repository
+	RepoCfgPath string // host path to .keg.yaml
 	SandboxHome string // tmpfs home inside the sandbox
 	TmpDir      string // host instance temp dir
 	ResolvConf  string // host path of the injected resolv.conf ("" = none)

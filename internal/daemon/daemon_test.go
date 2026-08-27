@@ -23,7 +23,7 @@ func writeRepoConfig(t *testing.T, dir string) {
 	}
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, dir, content)
+	_, _ = trust.Approve(store, dir, content, nil)
 	_ = trust.SaveFile(storePath, store)
 }
 

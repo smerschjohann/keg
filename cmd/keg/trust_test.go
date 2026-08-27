@@ -126,3 +126,71 @@ func TestCLI_HelpIncludesTrustAndEnvFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestTrustCommand_WithAnchors(t *testing.T) {
+	tempDir := t.TempDir()
+	trustDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", trustDir)
+
+	repoDir := filepath.Join(tempDir, "myrepo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(repoDir, ".keg.yaml")
+	cfgContent := "version: \"1\"\ntrust_anchors:\n  - Makefile\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	makePath := filepath.Join(repoDir, "Makefile")
+	makeContent := "all:\n\techo make\n"
+	if err := os.WriteFile(makePath, []byte(makeContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initially status is NONE
+	cmd := NewCommand()
+	var out bytes.Buffer
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "trust", "--repo", repoDir, "--status"}); err != nil {
+		t.Fatalf("trust --status failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "NONE") {
+		t.Errorf("expected NONE, got:\n%s", out.String())
+	}
+
+	// 2. Approve via CLI
+	out.Reset()
+	cmd = NewCommand()
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "trust", "--repo", repoDir}); err != nil {
+		t.Fatalf("keg trust failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "Approved") {
+		t.Errorf("expected Approved message, got:\n%s", out.String())
+	}
+
+	// 3. Status is now TRUSTED
+	out.Reset()
+	cmd = NewCommand()
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "trust", "--repo", repoDir, "--status"}); err != nil {
+		t.Fatalf("trust --status failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "TRUSTED") {
+		t.Errorf("expected TRUSTED, got:\n%s", out.String())
+	}
+
+	// 4. Modify Makefile -> status becomes CHANGED
+	if err := os.WriteFile(makePath, []byte("all:\n\techo updated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	cmd = NewCommand()
+	cmd.Writer = &out
+	if err := cmd.Run(context.Background(), []string{"keg", "trust", "--repo", repoDir, "--status"}); err != nil {
+		t.Fatalf("trust --status failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "CHANGED") {
+		t.Errorf("expected CHANGED on modified Makefile, got:\n%s", out.String())
+	}
+}

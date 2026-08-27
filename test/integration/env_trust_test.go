@@ -59,7 +59,7 @@ func TestSandboxUserConfigInherit(t *testing.T) {
 	}
 	storePath := trust.DefaultTrustPath()
 	store, _ := trust.LoadFile(storePath)
-	_, _ = trust.Approve(store, dir, []byte(repoCfg))
+	_, _ = trust.Approve(store, dir, []byte(repoCfg), nil)
 	_ = trust.SaveFile(storePath, store)
 
 	userCfgPath := filepath.Join(t.TempDir(), "user-config.yaml")
@@ -182,7 +182,7 @@ func TestSandboxTrustGate(t *testing.T) {
 	// 2. Approve via trust store
 	trustStorePath := filepath.Join(trustDir, "keg", "trust.yaml")
 	store, _ := trust.LoadFile(trustStorePath)
-	_, err = trust.Approve(store, dir, []byte(cfg))
+	_, err = trust.Approve(store, dir, []byte(cfg), nil)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSandboxTrustGate_Changed(t *testing.T) {
 	}
 	trustStorePath := filepath.Join(trustDir, "keg", "trust.yaml")
 	store, _ := trust.LoadFile(trustStorePath)
-	_, _ = trust.Approve(store, dir, []byte(cfg1))
+	_, _ = trust.Approve(store, dir, []byte(cfg1), nil)
 	_ = trust.SaveFile(trustStorePath, store)
 
 	// First run succeeds
@@ -247,5 +247,48 @@ func TestSandboxTrustGate_Changed(t *testing.T) {
 	_, _, err = orchestrator.BuildPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
 	if err == nil || !strings.Contains(err.Error(), "keg trust") {
 		t.Fatalf("changed repo config must fail mentioning 'keg trust', got: %v", err)
+	}
+}
+
+func TestSandboxTrustGate_TrustAnchors(t *testing.T) {
+	findBwrap(t)
+	dir := t.TempDir()
+	trustDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", trustDir)
+
+	cfg := "version: \"1\"\ntrust_anchors:\n  - Makefile\n"
+	if err := os.WriteFile(filepath.Join(dir, ".keg.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	makeContent := "all:\n\techo build\n"
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(makeContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initial BuildPlan fails before approve
+	_, _, err := orchestrator.BuildPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err == nil {
+		t.Fatalf("expected unapproved trust anchors to fail")
+	}
+
+	// 2. Approve config and anchor
+	trustStorePath := filepath.Join(trustDir, "keg", "trust.yaml")
+	store, _ := trust.LoadFile(trustStorePath)
+	_, _ = trust.Approve(store, dir, []byte(cfg), map[string][]byte{"Makefile": []byte(makeContent)})
+	_ = trust.SaveFile(trustStorePath, store)
+
+	// 3. BuildPlan succeeds
+	_, _, err = orchestrator.BuildPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err != nil {
+		t.Fatalf("BuildPlan after approving anchors failed: %v", err)
+	}
+
+	// 4. Modify Makefile -> BuildPlan fails
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("all:\n\tmalicious\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = orchestrator.BuildPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "")
+	if err == nil || !strings.Contains(err.Error(), "keg trust") {
+		t.Fatalf("modified anchor must fail mentioning 'keg trust', got: %v", err)
 	}
 }
