@@ -49,12 +49,12 @@ security:
 # ── Secrets ─────────────────────────────────────────────────────────────
 # Beispiel: ein maschinenweit gültiger API-Key, der in JEDER Sandbox landet
 # (always: true) — unabhängig von der Repo-.keg.yaml. /home/coder/.local/bin/genkey
-# erzeugt ein kurzlebiges Token für die Instanz 'keg', gültig 1500 s,
-# das jailsbox alle 10 min erneuert.
+# erzeugt ein kurzlebiges Token für die Instanz, das jailsbox alle 10 min erneuert.
 secret_sources:
   ai_secret_key:
     # Aufruf: genkey <name_of_keg_instance> <seconds_until_token_is_invalidated>
-    cmd: ["/home/coder/.local/bin/genkey", "keg", "1500"]
+    # Unterstützt Go-Templates: .Vars.instance, .Vars.token_ttl, .Vars.secret_name etc.
+    cmd: ["/home/coder/.local/bin/genkey", '{{ .Vars.instance | default "keg" }}', '{{ .Vars.token_ttl | default "1500" }}']
     interval: 10m
     timeout: 5s
     on_refresh_error: keep

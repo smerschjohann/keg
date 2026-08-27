@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -43,7 +44,7 @@ func IsValidInstanceName(name string) bool {
 
 // BuildPlan parses and validates configuration for a sandbox run and prepares
 // the filesystem and orchestrator plan without starting the sandbox.
-func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskName string, cacheOverlay Overlay, isolatedCacheName, instanceName string) (Plan, *config.User, error) {
+func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskName string, cacheOverlay Overlay, isolatedCacheName, instanceName string, cliVars ...map[string]string) (Plan, *config.User, error) {
 	root := repoDir
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
@@ -88,7 +89,11 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	}
 
 	effective := config.MatchRepo(user, root)
-	vars := config.MergeVars(repo.Vars, effective.Vars, nil)
+	var cliVarsMap map[string]string
+	if len(cliVars) > 0 {
+		cliVarsMap = cliVars[0]
+	}
+	vars := config.MergeVars(repo.Vars, effective.Vars, nil, cliVarsMap)
 
 	// Template context: .Vars always, .Env only when user config opts in.
 	tctx := template.Context{Vars: vars}
@@ -257,13 +262,27 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 			}
 		}
 		if len(fetchRefs) > 0 {
+			secretVars := make(map[string]string, len(vars)+2)
+			maps.Copy(secretVars, vars)
+			instName := plan.InstanceName
+			if instName == "" {
+				instName = strings.TrimPrefix(filepath.Base(plan.TmpDir), "keg-")
+			}
+			secretVars["instance"] = instName
+			secretVars["repo_dir"] = root
+			secretTctx := template.Context{
+				Vars: secretVars,
+				Env:  tctx.Env,
+			}
+
 			secretsDir := filepath.Join(plan.TmpDir, "secrets")
-			if err := secrets.FetchInitial(context.Background(), fetchRefs, effective.SecretSources, secretsDir); err != nil {
+			if err := secrets.FetchInitial(context.Background(), fetchRefs, effective.SecretSources, secretsDir, secretTctx); err != nil {
 				return Plan{}, nil, err
 			}
 			plan.SecretDir = secretsDir
 			plan.Secrets = fetchRefs
 			plan.SecretSources = effective.SecretSources
+			plan.SecretTemplateCtx = secretTctx
 		}
 		for _, s := range secretNeeds {
 			if s.Env != "" {
@@ -530,7 +549,7 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 		}, func(err error) {
 			slog.Error("secret refresh fatal error", "err", err)
 			_ = sb.Signal(syscall.SIGTERM)
-		})
+		}, plan.SecretTemplateCtx)
 	}
 
 	return nil

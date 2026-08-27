@@ -56,6 +56,24 @@ func parseEnvFlag(entries []string) (map[string]string, []string, error) {
 	return set, inherit, nil
 }
 
+func parseVarFlags(entries []string) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, entry := range entries {
+		if entry == "" {
+			return nil, fmt.Errorf("empty variable flag entry")
+		}
+		k, v, found := strings.Cut(entry, "=")
+		if !found {
+			return nil, fmt.Errorf("invalid variable flag entry %q: want KEY=value", entry)
+		}
+		if k == "" {
+			return nil, fmt.Errorf("invalid variable flag entry %q: empty variable name", entry)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
 func parsePublishFlags(entries []string) ([]config.PortSpec, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -124,12 +142,17 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		return err
 	}
 
+	cliVars, err := parseVarFlags(c.StringSlice("var"))
+	if err != nil {
+		return err
+	}
+
 	cliPorts, err := parsePublishFlags(c.StringSlice("publish"))
 	if err != nil {
 		return err
 	}
 
-	plan, userCfg, err := orchestrator.BuildPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName, instanceName)
+	plan, userCfg, err := orchestrator.BuildPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName, instanceName, cliVars)
 	if err != nil {
 		return err
 	}

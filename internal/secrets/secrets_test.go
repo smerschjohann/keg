@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/template"
 )
 
 func writeScript(t *testing.T, name, body string) string {
@@ -271,5 +272,151 @@ fi
 
 	if !fatalCalled.Load() {
 		t.Error("expected onFatalError to be called when on_refresh_error: fail")
+	}
+}
+
+func TestFetchInitial_TemplateExpansion(t *testing.T) {
+	script := writeScript(t, "echo-args", `echo -n "$1 $2 $3"`)
+	destDir := filepath.Join(t.TempDir(), "secrets")
+
+	requested := []config.SecretRef{
+		{Name: "ai_token"},
+	}
+	sources := map[string]config.SecretSource{
+		"ai_token": {
+			Cmd: []string{
+				script,
+				"{{ .Vars.instance }}",
+				`{{ .Vars.token_ttl | default "1500" }}`,
+				"{{ .Vars.secret_name }}",
+			},
+		},
+	}
+
+	tctx := template.Context{
+		Vars: map[string]string{
+			"instance":  "my-sandbox",
+			"token_ttl": "1800",
+		},
+	}
+
+	if err := FetchInitial(context.Background(), requested, sources, destDir, tctx); err != nil {
+		t.Fatalf("FetchInitial: %v", err)
+	}
+
+	secretPath := filepath.Join(destDir, "ai_token")
+	data, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatalf("read secret: %v", err)
+	}
+	want := "my-sandbox 1800 ai_token"
+	if string(data) != want {
+		t.Errorf("secret data = %q, want %q", string(data), want)
+	}
+}
+
+func TestFetchInitial_SubprocessEnvironment(t *testing.T) {
+	script := writeScript(t, "echo-env", `echo -n "$KEG_INSTANCE $KEG_SECRET_NAME $KEG_REPO_DIR"`)
+	destDir := filepath.Join(t.TempDir(), "secrets")
+
+	requested := []config.SecretRef{
+		{Name: "ai_key"},
+	}
+	sources := map[string]config.SecretSource{
+		"ai_key": {
+			Cmd: []string{script},
+		},
+	}
+
+	tctx := template.Context{
+		Vars: map[string]string{
+			"instance": "test-box-42",
+			"repo_dir": "/home/dev/repo",
+		},
+	}
+
+	if err := FetchInitial(context.Background(), requested, sources, destDir, tctx); err != nil {
+		t.Fatalf("FetchInitial: %v", err)
+	}
+
+	secretPath := filepath.Join(destDir, "ai_key")
+	data, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatalf("read secret: %v", err)
+	}
+	want := "test-box-42 ai_key /home/dev/repo"
+	if string(data) != want {
+		t.Errorf("secret data = %q, want %q", string(data), want)
+	}
+}
+
+func TestRefresher_TemplateExpansion(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "val.txt")
+	if err := os.WriteFile(stateFile, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	script := writeScript(t, "refresh-echo", `echo -n "$(cat `+stateFile+`) $1 $KEG_INSTANCE"`)
+	destDir := filepath.Join(t.TempDir(), "secrets")
+
+	requested := []config.SecretRef{{Name: "dyn_sec"}}
+	sources := map[string]config.SecretSource{
+		"dyn_sec": {
+			Cmd:      []string{script, "{{ .Vars.token_ttl }}"},
+			Interval: config.Duration{Duration: 20 * time.Millisecond},
+		},
+	}
+
+	tctx := template.Context{
+		Vars: map[string]string{
+			"instance":  "my-inst",
+			"token_ttl": "900",
+		},
+	}
+
+	if err := FetchInitial(context.Background(), requested, sources, destDir, tctx); err != nil {
+		t.Fatal(err)
+	}
+
+	initialData, _ := os.ReadFile(filepath.Join(destDir, "dyn_sec"))
+	if string(initialData) != "v1 900 my-inst" {
+		t.Fatalf("initial = %q, want 'v1 900 my-inst'", string(initialData))
+	}
+
+	var changedAudit atomic.Bool
+	auditFn := func(name, status string) {
+		if status == "changed" {
+			changedAudit.Store(true)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	refresher := NewRefresher()
+	go refresher.Start(ctx, requested, sources, destDir, auditFn, nil, tctx)
+
+	// Update state
+	_ = os.WriteFile(stateFile, []byte("v2"), 0o600)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var lastData string
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		data, err := os.ReadFile(filepath.Join(destDir, "dyn_sec"))
+		if err == nil {
+			lastData = string(data)
+			if lastData == "v2 900 my-inst" {
+				break
+			}
+		}
+	}
+
+	if !changedAudit.Load() {
+		t.Error("expected changed audit after refresher ran")
+	}
+
+	if lastData != "v2 900 my-inst" {
+		t.Errorf("refreshed = %q, want 'v2 900 my-inst'", lastData)
 	}
 }

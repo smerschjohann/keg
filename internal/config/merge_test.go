@@ -196,6 +196,26 @@ func TestMergeVars_PrecedenceOrder(t *testing.T) {
 	}
 }
 
+func TestMergeVars_CLIVarsHighestPrecedence(t *testing.T) {
+	repoVars := map[string]string{"key": "repo", "only_repo": "1"}
+	userGlobal := map[string]string{"key": "user", "only_user": "2"}
+	repoOverride := map[string]string{"key": "match", "only_match": "3"}
+	cliVars := map[string]string{"key": "cli", "only_cli": "4", "FROM_ENV": "cli_override"}
+
+	t.Setenv("KEG_VAR_FROM_ENV", "envval")
+	vars := MergeVars(repoVars, userGlobal, repoOverride, cliVars)
+
+	if vars["key"] != "cli" {
+		t.Errorf("vars[key] = %q, want %q (cli vars must have highest precedence)", vars["key"], "cli")
+	}
+	if vars["FROM_ENV"] != "cli_override" {
+		t.Errorf("vars[FROM_ENV] = %q, want %q (cli vars must override KEG_VAR_*)", vars["FROM_ENV"], "cli_override")
+	}
+	if vars["only_repo"] != "1" || vars["only_user"] != "2" || vars["only_match"] != "3" || vars["only_cli"] != "4" {
+		t.Errorf("unexpected merged vars: %+v", vars)
+	}
+}
+
 func TestMergeUsers_MountsAndNetwork(t *testing.T) {
 	base := userFromYAML(t, `
 mounts:

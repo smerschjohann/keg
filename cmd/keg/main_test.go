@@ -122,6 +122,7 @@ func TestCLI_RunFlagsDeclared(t *testing.T) {
 	}{
 		{name: "publish flag with -p alias", flag: "publish", aliases: []string{"p"}},
 		{name: "env flag with -e alias", flag: "env", aliases: []string{"e"}},
+		{name: "var flag with -V alias", flag: "var", aliases: []string{"V"}},
 		{name: "name flag with -n alias", flag: "name", aliases: []string{"n"}},
 		{name: "ephemeral flag", flag: "ephemeral"},
 	}

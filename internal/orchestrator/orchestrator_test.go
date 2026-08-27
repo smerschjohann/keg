@@ -781,6 +781,51 @@ repos:
 	}
 }
 
+func TestBuildPlan_SecretSourcesTemplateExpansion(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, ".keg.yaml"), []byte("version: \"1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	approveRepo(t, repoDir, []byte("version: \"1\"\n"))
+
+	script := filepath.Join(t.TempDir(), "gen-token")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho -n \"$1 $2 $3\"\n"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	userYAML := `
+vars:
+  token_ttl: "1500"
+secret_sources:
+  ai_secret_key:
+    cmd: ["` + script + `", "{{ .Vars.instance }}", "{{ .Vars.token_ttl }}", "{{ .Vars.secret_name }}"]
+    always: true
+`
+	userFile := filepath.Join(t.TempDir(), "user-config.yaml")
+	if err := os.WriteFile(userFile, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cliVars := map[string]string{"token_ttl": "2400"}
+	plan, _, err := BuildPlan(repoDir, "", userFile, OverlayPlain, "", OverlayPlain, "", "my-sandbox-inst", cliVars)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	secretPath := filepath.Join(plan.SecretDir, "ai_secret_key")
+	data, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatalf("read secret: %v", err)
+	}
+	want := "my-sandbox-inst 2400 ai_secret_key"
+	if string(data) != want {
+		t.Errorf("secret content = %q, want %q", string(data), want)
+	}
+	if plan.SecretTemplateCtx.Vars["instance"] != "my-sandbox-inst" {
+		t.Errorf("SecretTemplateCtx instance = %q, want my-sandbox-inst", plan.SecretTemplateCtx.Vars["instance"])
+	}
+}
+
 func TestBuildPlan_TrustGate(t *testing.T) {
 	repoDir := t.TempDir()
 	trustDir := t.TempDir()

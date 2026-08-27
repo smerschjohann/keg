@@ -79,6 +79,11 @@ func NewCommand() *cli.Command {
 						Usage:   "pass through (-e VAR) or set (-e VAR=value) environment variable in sandbox (repeatable)",
 					},
 					&cli.StringSliceFlag{
+						Name:    "var",
+						Aliases: []string{"V"},
+						Usage:   "set template variable (KEY=value, repeatable)",
+					},
+					&cli.StringSliceFlag{
 						Name:    "publish",
 						Aliases: []string{"p", "port"},
 						Usage:   "publish a container port to the host (e.g. -p 8080, -p 8080:8080, -p 127.0.0.1:8080:8080, -p :8080) (repeatable)",

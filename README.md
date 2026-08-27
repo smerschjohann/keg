@@ -75,6 +75,9 @@ bin/keg run --name worker-1 -- just test
 # Host-Umgebungsvariablen durchreichen oder setzen:
 bin/keg run -e LANG -e COLORTERM -e CUSTOM_VAR=value -- bash
 
+# Template-Variablen beim Aufruf setzen oder überschreiben:
+bin/keg run --var token_ttl=1800 -V custom_greeting=hello -- bash
+
 # Alle Host-Variablen durchreichen (außer gesperrte Credentials/Proxies):
 bin/keg run --inherit-all -- bash
 
@@ -276,10 +279,10 @@ paths:
   storage_base: "/var/lib/containers/storage/sandbox"
   tmp_base: "/tmp"
 
-# Host-Quellen für Secrets mit automatischem Refresh
+# Host-Quellen für Secrets mit automatischem Refresh (unterstützt Go-Templates: .Vars.instance, .Vars.token_ttl, .Vars.secret_name)
 secret_sources:
   ai_secret_key:
-    cmd: ["genkey", "my-instance", "60"]
+    cmd: ["genkey", '{{ .Vars.instance | default "keg" }}', '{{ .Vars.token_ttl | default "60" }}']
     interval: 30s
     timeout: 5s
     on_refresh_error: keep

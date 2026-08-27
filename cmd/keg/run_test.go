@@ -1137,3 +1137,81 @@ func TestBuildRunPlan_PortsPublishCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestParseVarFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []string
+		want    map[string]string
+		wantErr bool
+	}{
+		{
+			name:    "empty slice",
+			entries: nil,
+			want:    map[string]string{},
+			wantErr: false,
+		},
+		{
+			name:    "valid key-value pairs",
+			entries: []string{"token_ttl=1800", "my_var=hello=world", "empty_val="},
+			want: map[string]string{
+				"token_ttl": "1800",
+				"my_var":    "hello=world",
+				"empty_val": "",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "empty entry",
+			entries: []string{""},
+			wantErr: true,
+		},
+		{
+			name:    "missing equals",
+			entries: []string{"just_a_key"},
+			wantErr: true,
+		},
+		{
+			name:    "empty key",
+			entries: []string{"=value"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseVarFlags(tt.entries)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseVarFlags(%v) error = %v, wantErr %v", tt.entries, err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseVarFlags(%v) = %v, want %v", tt.entries, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRun_VarFlagOverridesTemplates(t *testing.T) {
+	dir := t.TempDir()
+	repoCfg := `version: "1"
+vars:
+  greeting: repo_default
+env:
+  set:
+    GREETING: '{{ .Vars.greeting }}'
+`
+	writeFile(t, filepath.Join(dir, ".keg.yaml"), repoCfg)
+
+	cliVars, err := parseVarFlags([]string{"greeting=cli_override"})
+	if err != nil {
+		t.Fatalf("parseVarFlags: %v", err)
+	}
+	plan, _, err := orchestrator.BuildPlan(dir, "", "", orchestrator.OverlayPlain, "", orchestrator.OverlayPlain, "", "", cliVars)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	if plan.EnvSet["GREETING"] != "cli_override" {
+		t.Errorf("plan.EnvSet[GREETING] = %q, want %q", plan.EnvSet["GREETING"], "cli_override")
+	}
+}

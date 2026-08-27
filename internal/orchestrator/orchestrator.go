@@ -12,6 +12,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/portsfw"
+	"github.com/smerschjohann/keg/internal/template"
 )
 
 // SecretBind is one existing host file exposed read-only in the sandbox.
@@ -179,6 +180,8 @@ type Plan struct {
 	// no dynamic source supplies them: user config `secrets:` maps
 	// <name> -> host file, mounted at /run/secrets/<name>.
 	SecretPathBinds []SecretBind
+	// SecretTemplateCtx carries the template context used for resolving dynamic secret commands.
+	SecretTemplateCtx template.Context
 
 	// Landlock controls Landlock LSM enforcement mode (auto | on | off).
 	Landlock string

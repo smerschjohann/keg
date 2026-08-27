@@ -238,8 +238,8 @@ func literalPrefixLen(pattern string) int {
 }
 
 // MergeVars merges vars per CONCEPT.md precedence (later wins):
-// repo < user-global < repos[match] < KEG_VAR_* environment.
-func MergeVars(repoVars, userGlobalVars, repoMatchVars map[string]string) map[string]string {
+// repo < user-global < repos[match] < KEG_VAR_* environment < cliVars.
+func MergeVars(repoVars, userGlobalVars, repoMatchVars map[string]string, cliVars ...map[string]string) map[string]string {
 	out := map[string]string{}
 	maps.Copy(out, orEmpty(repoVars))
 	maps.Copy(out, orEmpty(userGlobalVars))
@@ -250,6 +250,9 @@ func MergeVars(repoVars, userGlobalVars, repoMatchVars map[string]string) map[st
 				out[k] = v
 			}
 		}
+	}
+	for _, cv := range cliVars {
+		maps.Copy(out, orEmpty(cv))
 	}
 	return out
 }

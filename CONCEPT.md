@@ -417,18 +417,23 @@ dem Host**.
 #### Aufteilung der Ebenen (konsistent zu §4.8/§5)
 
 * **User-Config** definiert den *Mechanismus* — woher der Wert kommt und
-  wie oft er refreshed wird:
+  wie oft er refreshed wird. Argumente in `cmd` unterstützen Go-Templates
+  (z. B. `{{ .Vars.instance }}`, `{{ .Vars.secret_name }}`, `{{ .Vars.repo_dir }}`
+  sowie alle regulären `.Vars`):
   ```yaml
   # ~/.config/keg/config.yaml
   secret_sources:
     ai_token:
-      cmd: [op, read, "op://Vault/AI/token"]
+      cmd: [op, read, 'op://Vault/AI/{{ .Vars.instance | default "token" }}']
       interval: 5m          # Refresh-Intervall auf dem Host
       timeout: 10s
       on_refresh_error: keep   # keep = letzter guter Wert bleibt (Default)
                                # fail = Sandbox wird beendet
       always: true          # optional: in JEDE Sandbox einspielen (s. u.)
   ```
+  Zusätzlich setzt `keg` im Subprozess `KEG_INSTANCE`, `KEG_SECRET_NAME`
+  und `KEG_REPO_DIR` in der Host-Umgebung (`c.Env`).
+
   Alternativ (oder ergänzend) erlaubt die User-Config, **bestehende
   Host-Dateien direkt als Secret bereitzustellen**:
   ```yaml
@@ -962,6 +967,7 @@ Merge-Reihenfolge für `vars:` (später gewinnt):
 2. `~/.config/keg/config.yaml` → globaler `vars:`-Block
 3. `… → repos[<match>].vars`
 4. Environment `KEG_VAR_<NAME>` (Upper-Snake)
+5. CLI-Flags `--var / -V` (höchste Priorität)
 
 Einschränkungen aus Sicherheitsgründen:
 
