@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/trust"
 
 	"github.com/urfave/cli/v3"
 )
@@ -21,6 +24,10 @@ import (
 // domains, mounts, secrets) would leak into otherwise-plain plans and flip
 // them into configured sandboxes, making results machine-dependent.
 func TestMain(m *testing.M) {
+	if os.Getenv("TEST_RUN_MAIN") == "1" {
+		main()
+		return
+	}
 	if orchestrator.InitGuestDispatch() {
 		return
 	}
@@ -298,5 +305,125 @@ func TestCLI_ServeValidation(t *testing.T) {
 	err := runCLI(t, "serve", "--listen", "0.0.0.0:9999", "--auth", "none")
 	if err == nil || !strings.Contains(err.Error(), "token auth is required") {
 		t.Errorf("expected network token auth refusal, got: %v", err)
+	}
+}
+
+func TestCLI_StderrOnErrorWithoutVerbose(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T) (args []string)
+		wantStderr string
+	}{
+		{
+			name: "missing explicit repo config",
+			setup: func(t *testing.T) []string {
+				missing := filepath.Join(t.TempDir(), "nonexistent.yaml")
+				return []string{"run", "--config", missing}
+			},
+			wantStderr: "nonexistent.yaml",
+		},
+		{
+			name: "invalid repo yaml version",
+			setup: func(t *testing.T) []string {
+				dir := t.TempDir()
+				cfgPath := filepath.Join(dir, ".keg.yaml")
+				content := "version: \"99\"\n"
+				if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				storePath := trust.DefaultTrustPath()
+				_ = os.MkdirAll(filepath.Dir(storePath), 0o755)
+				store, _ := trust.LoadFile(storePath)
+				_, _ = trust.Approve(store, dir, []byte(content), nil)
+				_ = trust.SaveFile(storePath, store)
+				return []string{"run", "--repo", dir}
+			},
+			wantStderr: "unsupported version",
+		},
+		{
+			name: "invalid user config",
+			setup: func(t *testing.T) []string {
+				dir := t.TempDir()
+				userCfg := filepath.Join(dir, "user.yaml")
+				if err := os.WriteFile(userCfg, []byte("invalid: yaml: ["), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return []string{"run", "--user-config", userCfg}
+			},
+			wantStderr: "user config",
+		},
+		{
+			name: "mutually exclusive flags",
+			setup: func(t *testing.T) []string {
+				return []string{"run", "--ephemeral", "--disk-overlay", "foo"}
+			},
+			wantStderr: "mutually exclusive",
+		},
+		{
+			name: "untrusted repo config non-interactive",
+			setup: func(t *testing.T) []string {
+				dir := t.TempDir()
+				cfgPath := filepath.Join(dir, ".keg.yaml")
+				content := "version: \"1\"\n"
+				if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				// Don't approve in trust store
+				return []string{"run", "--repo", dir}
+			},
+			wantStderr: "is untrusted or has changed",
+		},
+		{
+			name: "invalid env flag",
+			setup: func(t *testing.T) []string {
+				return []string{"run", "-e", "=bad"}
+			},
+			wantStderr: "invalid environment flag entry",
+		},
+		{
+			name: "invalid var flag",
+			setup: func(t *testing.T) []string {
+				return []string{"run", "-V", "badformat"}
+			},
+			wantStderr: "invalid variable flag entry",
+		},
+		{
+			name: "invalid publish port flag",
+			setup: func(t *testing.T) []string {
+				return []string{"run", "-p", "999999"}
+			},
+			wantStderr: "out of range",
+		},
+		{
+			name: "serve invalid auth",
+			setup: func(t *testing.T) []string {
+				return []string{"serve", "--listen", "0.0.0.0:9999", "--auth", "none"}
+			},
+			wantStderr: "token auth is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := tt.setup(t)
+			cmd := exec.Command(os.Args[0], args...)
+			cmd.Env = append(os.Environ(), "TEST_RUN_MAIN=1")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			if err == nil {
+				t.Fatalf("expected command to fail, but succeeded with stdout: %q", stdout.String())
+			}
+
+			stderrStr := stderr.String()
+			if !strings.Contains(stderrStr, tt.wantStderr) {
+				t.Fatalf("stderr %q does not contain %q", stderrStr, tt.wantStderr)
+			}
+			if !strings.HasPrefix(stderrStr, "keg:") {
+				t.Errorf("stderr %q should start with 'keg:' prefix", stderrStr)
+			}
+		})
 	}
 }

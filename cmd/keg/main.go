@@ -4,7 +4,8 @@ package main
 
 import (
 	"context"
-	"log"
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/smerschjohann/keg/internal/orchestrator"
@@ -145,6 +146,11 @@ func main() {
 		return
 	}
 	if err := NewCommand().Run(context.Background(), os.Args); err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "keg: %v\n", err)
+		var exitErr cli.ExitCoder
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
 	}
 }
