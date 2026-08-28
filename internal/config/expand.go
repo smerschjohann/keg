@@ -8,28 +8,35 @@ import (
 	"strings"
 )
 
-// parsePortString accepts "3000" (guest=host) and "src:dst".
-func parsePortString(s string) (guest, host int, err error) {
+// parsePortString accepts "3000" (guest=host), "5432:15432" (guest:host), and "ip:host:guest" forms.
+func parsePortString(s string) (guest, host int, hostIP string, err error) {
+	if strings.Contains(s, "[") || (strings.Count(s, ":") >= 2 && !strings.HasPrefix(s, ":")) {
+		spec, err := ParsePublishFlag(s)
+		if err != nil {
+			return 0, 0, "", err
+		}
+		return spec.Guest, spec.Host, spec.HostIP, nil
+	}
 	parts := strings.Split(s, ":")
 	switch len(parts) {
 	case 1:
 		guest, err = strconv.Atoi(parts[0])
 		if err != nil {
-			return 0, 0, fmt.Errorf("port spec %q: invalid port number", s)
+			return 0, 0, "", fmt.Errorf("port spec %q: invalid port number", s)
 		}
-		return guest, guest, nil
+		return guest, guest, "127.0.0.1", nil
 	case 2:
 		guest, err = strconv.Atoi(parts[0])
 		if err != nil {
-			return 0, 0, fmt.Errorf("port spec %q: invalid sandbox port", s)
+			return 0, 0, "", fmt.Errorf("port spec %q: invalid sandbox port", s)
 		}
 		host, err = strconv.Atoi(parts[1])
 		if err != nil {
-			return 0, 0, fmt.Errorf("port spec %q: invalid host port", s)
+			return 0, 0, "", fmt.Errorf("port spec %q: invalid host port", s)
 		}
-		return guest, host, nil
+		return guest, host, "127.0.0.1", nil
 	default:
-		return 0, 0, fmt.Errorf("port spec %q: want \"<port>\" or \"<sandbox>:<host>\"", s)
+		return 0, 0, "", fmt.Errorf("port spec %q: want \"<port>\" or \"<sandbox>:<host>\"", s)
 	}
 }
 
@@ -76,7 +83,7 @@ func ParsePublishFlag(s string) (PortSpec, error) {
 	// Validate hostIP if present
 	if hostIP != "" {
 		if !isAllowedHostIP(hostIP) {
-			return PortSpec{}, fmt.Errorf("port spec %q: invalid host IP %q: keg only binds on loopback (127.0.0.1)", s, hostIP)
+			return PortSpec{}, fmt.Errorf("port spec %q: invalid host IP %q", s, hostIP)
 		}
 	}
 
@@ -130,8 +137,9 @@ func ParsePublishFlag(s string) (PortSpec, error) {
 				isDynamic = true
 			} else if isIPOrHost(parts[0]) {
 				if !isAllowedHostIP(parts[0]) {
-					return PortSpec{}, fmt.Errorf("port spec %q: invalid host IP %q: keg only binds on loopback (127.0.0.1)", s, parts[0])
+					return PortSpec{}, fmt.Errorf("port spec %q: invalid host IP %q", s, parts[0])
 				}
+				hostIP = parts[0]
 				g, err := parsePortNum(parts[1], s, "sandbox")
 				if err != nil {
 					return PortSpec{}, err
@@ -153,8 +161,9 @@ func ParsePublishFlag(s string) (PortSpec, error) {
 		case 3:
 			ip := parts[0]
 			if ip != "" && !isAllowedHostIP(ip) {
-				return PortSpec{}, fmt.Errorf("port spec %q: invalid host IP %q: keg only binds on loopback (127.0.0.1)", s, ip)
+				return PortSpec{}, fmt.Errorf("port spec %q: invalid host IP %q", s, ip)
 			}
+			hostIP = ip
 			if parts[1] == "" || parts[1] == "0" {
 				isDynamic = true
 			} else {
@@ -174,11 +183,110 @@ func ParsePublishFlag(s string) (PortSpec, error) {
 		}
 	}
 
+	if hostIP == "" || hostIP == "localhost" {
+		hostIP = "127.0.0.1"
+	}
+
 	return PortSpec{
+		HostIP:  hostIP,
 		Guest:   guestPort,
 		Host:    hostPort,
 		Dynamic: isDynamic,
 	}, nil
+}
+
+// ParseForwardHostFlag parses an SSH-compatible forward-host specification (-L):
+// e.g. "2345:127.0.0.1:1234", "2345:db.internal:5432", "2345:[::1]:1234",
+// "db.internal:5432" (guest_port defaults to target_port), or "5432" (assumes localhost:5432).
+func ParseForwardHostFlag(s string) (ForwardHostSpec, error) {
+	if s == "" {
+		return ForwardHostSpec{}, fmt.Errorf("empty forward host spec")
+	}
+
+	raw := s
+	// Handle bracketed IPv6 in target: e.g. "2345:[::1]:1234" or "[::1]:1234"
+	if strings.Contains(raw, "[") && strings.Contains(raw, "]") {
+		openIdx := strings.Index(raw, "[")
+		closeIdx := strings.Index(raw, "]")
+		if closeIdx < openIdx {
+			return ForwardHostSpec{}, fmt.Errorf("forward host spec %q: invalid bracket syntax", s)
+		}
+		targetHost := raw[openIdx+1 : closeIdx]
+		if targetHost == "" {
+			return ForwardHostSpec{}, fmt.Errorf("forward host spec %q: empty target host in bracket", s)
+		}
+		prefix := strings.TrimSuffix(raw[:openIdx], ":")
+		rest := raw[closeIdx+1:]
+		if !strings.HasPrefix(rest, ":") {
+			return ForwardHostSpec{}, fmt.Errorf("forward host spec %q: missing target port after IPv6 address", s)
+		}
+		targetPortStr := strings.TrimPrefix(rest, ":")
+		targetPort, err := parsePortNum(targetPortStr, s, "target")
+		if err != nil {
+			return ForwardHostSpec{}, err
+		}
+		guestPort := targetPort
+		if prefix != "" {
+			g, err := parsePortNum(prefix, s, "guest")
+			if err != nil {
+				return ForwardHostSpec{}, err
+			}
+			guestPort = g
+		}
+		return ForwardHostSpec{
+			GuestPort:  guestPort,
+			TargetHost: targetHost,
+			TargetPort: targetPort,
+		}, nil
+	}
+
+	parts := strings.Split(raw, ":")
+	switch len(parts) {
+	case 1:
+		p, err := parsePortNum(parts[0], s, "port")
+		if err != nil {
+			return ForwardHostSpec{}, err
+		}
+		return ForwardHostSpec{
+			GuestPort:  p,
+			TargetHost: "127.0.0.1",
+			TargetPort: p,
+		}, nil
+	case 2:
+		targetHost := parts[0]
+		if targetHost == "" {
+			return ForwardHostSpec{}, fmt.Errorf("forward host spec %q: empty target host", s)
+		}
+		targetPort, err := parsePortNum(parts[1], s, "target")
+		if err != nil {
+			return ForwardHostSpec{}, err
+		}
+		return ForwardHostSpec{
+			GuestPort:  targetPort,
+			TargetHost: targetHost,
+			TargetPort: targetPort,
+		}, nil
+	case 3:
+		guestPort, err := parsePortNum(parts[0], s, "guest")
+		if err != nil {
+			return ForwardHostSpec{}, err
+		}
+		targetHost := parts[1]
+		if targetHost == "" {
+			return ForwardHostSpec{}, fmt.Errorf("forward host spec %q: empty target host", s)
+		}
+		targetPort, err := parsePortNum(parts[2], s, "target")
+		if err != nil {
+			return ForwardHostSpec{}, err
+		}
+		return ForwardHostSpec{
+			GuestPort:  guestPort,
+			TargetHost: targetHost,
+			TargetPort: targetPort,
+		}, nil
+	default:
+		return ForwardHostSpec{}, fmt.Errorf("invalid forward host spec %q: want \"[<guest_port>:]<target_host>:<target_port>\"", s)
+	}
 }
 
 func parsePortNum(p, orig, kind string) (int, error) {
@@ -197,10 +305,7 @@ func isAllowedHostIP(ipStr string) bool {
 		return true
 	}
 	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	return ip.IsLoopback()
+	return ip != nil
 }
 
 func isIPOrHost(s string) bool {

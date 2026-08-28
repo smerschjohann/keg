@@ -87,7 +87,12 @@ func NewCommand() *cli.Command {
 					&cli.StringSliceFlag{
 						Name:    "publish",
 						Aliases: []string{"p", "port"},
-						Usage:   "publish a container port to the host (e.g. -p 8080, -p 8080:8080, -p 127.0.0.1:8080:8080, -p :8080) (repeatable)",
+						Usage:   "publish a container port to the host (e.g. -p 8080, -p 8080:8080, -p 0.0.0.0:1234:2345, -p :8080) (repeatable)",
+					},
+					&cli.StringSliceFlag{
+						Name:    "forward-host",
+						Aliases: []string{"L", "forward"},
+						Usage:   "forward a host/network service into the container (e.g. -L 2345:127.0.0.1:1234, -L 5432:db.internal:5432) (repeatable)",
 					},
 					&cli.BoolFlag{
 						Name:  "inherit-all",

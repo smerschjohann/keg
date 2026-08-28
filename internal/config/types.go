@@ -95,35 +95,106 @@ type SecretRef struct {
 // PortSpec is one entry of the port back-channel (CONCEPT.md §4.9).
 type PortSpec struct {
 	Name    string `yaml:"name"`
+	HostIP  string `yaml:"host_ip"`
 	Guest   int    `yaml:"guest"` // parsed from string forms too
 	Host    int    `yaml:"host"`
 	Dynamic bool   `yaml:"dynamic"`
 }
 
-// UnmarshalYAML accepts "3000", "src:dst" and struct forms.
+// UnmarshalYAML accepts "3000", "src:dst", "ip:src:dst" and struct forms.
 func (p *PortSpec) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.MappingNode {
 		var raw struct {
-			Name    string `yaml:"name"`
-			Port    int    `yaml:"port"`
-			Dynamic bool   `yaml:"dynamic"`
+			Name      string `yaml:"name"`
+			HostIP    string `yaml:"host_ip"`
+			Guest     int    `yaml:"guest"`
+			Host      int    `yaml:"host"`
+			Port      int    `yaml:"port"`
+			GuestPort int    `yaml:"guest_port"`
+			HostPort  int    `yaml:"host_port"`
+			Dynamic   bool   `yaml:"dynamic"`
 		}
 		if err := value.Decode(&raw); err != nil {
 			return err
 		}
 		p.Name, p.Dynamic = raw.Name, raw.Dynamic
-		p.Guest, p.Host = raw.Port, raw.Port
+		p.HostIP = raw.HostIP
+		if p.HostIP == "" {
+			p.HostIP = "127.0.0.1"
+		}
+		if raw.GuestPort != 0 {
+			p.Guest = raw.GuestPort
+		} else if raw.Guest != 0 {
+			p.Guest = raw.Guest
+		} else {
+			p.Guest = raw.Port
+		}
+
+		if raw.HostPort != 0 {
+			p.Host = raw.HostPort
+		} else if raw.Host != 0 {
+			p.Host = raw.Host
+		} else {
+			p.Host = raw.Port
+		}
 		return nil
 	}
 	if value.Kind != yaml.ScalarNode {
 		return fmt.Errorf("port spec must be a string or mapping")
 	}
 	s := value.Value
-	guest, host, err := parsePortString(s)
+	guest, host, hostIP, err := parsePortString(s)
 	if err != nil {
 		return err
 	}
 	p.Guest, p.Host = guest, host
+	p.HostIP = hostIP
+	if p.HostIP == "" {
+		p.HostIP = "127.0.0.1"
+	}
+	return nil
+}
+
+// ForwardHostSpec defines one host/network service forwarded into the sandbox (SSH -L pattern).
+// The guest binds a listener on 127.0.0.1:<GuestPort> in the sandbox; traffic is tunneled
+// to <TargetHost>:<TargetPort> on the host side.
+type ForwardHostSpec struct {
+	GuestPort  int    `yaml:"guest_port"`
+	TargetHost string `yaml:"target_host"`
+	TargetPort int    `yaml:"target_port"`
+}
+
+// UnmarshalYAML accepts "guest:host:port", "host:port" and struct forms.
+func (f *ForwardHostSpec) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.MappingNode {
+		var raw struct {
+			GuestPort  int    `yaml:"guest_port"`
+			TargetHost string `yaml:"target_host"`
+			TargetPort int    `yaml:"target_port"`
+		}
+		if err := value.Decode(&raw); err != nil {
+			return err
+		}
+		if raw.GuestPort < 1 || raw.GuestPort > 65535 {
+			return fmt.Errorf("forward_hosts: guest_port %d out of range 1..65535", raw.GuestPort)
+		}
+		if raw.TargetHost == "" {
+			return fmt.Errorf("forward_hosts: target_host cannot be empty")
+		}
+		if raw.TargetPort < 1 || raw.TargetPort > 65535 {
+			return fmt.Errorf("forward_hosts: target_port %d out of range 1..65535", raw.TargetPort)
+		}
+		f.GuestPort, f.TargetHost, f.TargetPort = raw.GuestPort, raw.TargetHost, raw.TargetPort
+		return nil
+	}
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("forward_hosts entry must be a string or mapping")
+	}
+	parsed, err := ParseForwardHostFlag(value.Value)
+	if err != nil {
+		return err
+	}
+	*f = parsed
 	return nil
 }
 
@@ -189,6 +260,7 @@ type Repo struct {
 	Mounts         []Mount           `yaml:"mounts"`
 	Secrets        []SecretRef       `yaml:"secrets"`
 	Ports          []PortSpec        `yaml:"ports"`
+	ForwardHosts   []ForwardHostSpec `yaml:"forward_hosts"`
 	Network        Network           `yaml:"network"`
 	DelegatedTasks DelegatedTasks    `yaml:"delegated_tasks"`
 	TrustAnchors   []string          `yaml:"trust_anchors"`

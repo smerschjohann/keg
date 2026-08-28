@@ -430,9 +430,9 @@ func TestBuildArgs_DeterministicAcrossRuns(t *testing.T) {
 // four channel FDs are handed to bwrap via ExtraFiles (fds 3..6 inside the
 // sandbox; CONCEPT.md §9 — proxy, DNS, runner, port back-channel).
 func TestFDPlan_ExtraFileCount(t *testing.T) {
-	if FDPreserved != 4 || FDProxy != 3 || FDDNS != 4 || FDRunner != 5 || FDPorts != 6 {
-		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d ports=%d preserved=%d",
-			FDProxy, FDDNS, FDRunner, FDPorts, FDPreserved)
+	if FDPreserved != 5 || FDProxy != 3 || FDDNS != 4 || FDRunner != 5 || FDPorts != 6 || FDHostForward != 7 {
+		t.Errorf("FD plan changed unexpectedly: proxy=%d dns=%d runner=%d ports=%d hostforward=%d preserved=%d",
+			FDProxy, FDDNS, FDRunner, FDPorts, FDHostForward, FDPreserved)
 	}
 }
 
@@ -1151,21 +1151,30 @@ func TestAddPortsToPlan(t *testing.T) {
 }
 
 func TestInvariant_PortPublishBindsOnlyLoopback(t *testing.T) {
-	// 1. Rejects non-loopback IP and 0.0.0.0
-	for _, invalidIP := range []string{"192.168.1.1:8080:80", "0.0.0.0:8080:80", "[::]:8080:80"} {
+	// 1. Rejects invalid host IP
+	for _, invalidIP := range []string{"999.999.999.999:8080:80", "abc.def.ghi.jkl:8080:80"} {
 		_, err := config.ParsePublishFlag(invalidIP)
-		if err == nil || !strings.Contains(err.Error(), "only binds on loopback") {
-			t.Fatalf("IP %q must be rejected, got: %v", invalidIP, err)
+		if err == nil || !strings.Contains(err.Error(), "invalid host IP") {
+			t.Fatalf("IP %q must be rejected as invalid host IP, got: %v", invalidIP, err)
 		}
 	}
 
-	// 2. Dynamic port listener created by AddPortsToPlan binds only on loopback
-	plan := Plan{}
-	spec, err := config.ParsePublishFlag(":8080")
+	// 2. Default host IP is loopback 127.0.0.1
+	spec, err := config.ParsePublishFlag("8080:80")
 	if err != nil {
 		t.Fatalf("ParsePublishFlag: %v", err)
 	}
-	if err := AddPortsToPlan(&plan, []config.PortSpec{spec}); err != nil {
+	if spec.HostIP != "127.0.0.1" {
+		t.Errorf("spec.HostIP = %q, want 127.0.0.1", spec.HostIP)
+	}
+
+	// 3. Dynamic port listener created by AddPortsToPlan without IP binds on loopback
+	plan := Plan{}
+	dynSpec, err := config.ParsePublishFlag(":8080")
+	if err != nil {
+		t.Fatalf("ParsePublishFlag: %v", err)
+	}
+	if err := AddPortsToPlan(&plan, []config.PortSpec{dynSpec}); err != nil {
 		t.Fatalf("AddPortsToPlan: %v", err)
 	}
 	if len(plan.Ports) != 1 {

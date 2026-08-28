@@ -510,30 +510,37 @@ func TestParsePublishFlag(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
+		wantHostIP  string
 		wantGuest   int
 		wantHost    int
 		wantDynamic bool
 		wantErr     string
 	}{
-		{name: "plain port", input: "8080", wantGuest: 8080, wantHost: 8080},
-		{name: "host and container port", input: "8080:80", wantGuest: 80, wantHost: 8080},
-		{name: "same host and container port", input: "8080:8080", wantGuest: 8080, wantHost: 8080},
-		{name: "empty ip host and container", input: ":8080:8080", wantGuest: 8080, wantHost: 8080},
-		{name: "empty ip host and different container", input: ":8080:80", wantGuest: 80, wantHost: 8080},
-		{name: "loopback ip host and container", input: "127.0.0.1:8080:80", wantGuest: 80, wantHost: 8080},
-		{name: "loopback ip same host and container", input: "127.0.0.1:8080:8080", wantGuest: 8080, wantHost: 8080},
-		{name: "localhost host and container", input: "localhost:8080:80", wantGuest: 80, wantHost: 8080},
-		{name: "dynamic port with colon", input: ":8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "dynamic port with double colon", input: "::8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "dynamic port with ip", input: "127.0.0.1::8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "dynamic port with zero host", input: "0:8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "dynamic port with ip and zero host", input: "127.0.0.1:0:8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "ipv6 loopback with host and container", input: "[::1]:8080:80", wantGuest: 80, wantHost: 8080},
-		{name: "ipv6 loopback dynamic", input: "[::1]::8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "ipv6 loopback plain container", input: "[::1]:8080", wantGuest: 8080, wantHost: 0, wantDynamic: true},
-		{name: "tcp protocol suffix on plain port", input: "8080/tcp", wantGuest: 8080, wantHost: 8080},
-		{name: "tcp protocol suffix on host:container", input: "8080:80/tcp", wantGuest: 80, wantHost: 8080},
-		{name: "tcp protocol suffix on ip:host:container", input: "127.0.0.1:8080:80/TCP", wantGuest: 80, wantHost: 8080},
+		{name: "plain port", input: "8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 8080},
+		{name: "host and container port", input: "8080:80", wantHostIP: "127.0.0.1", wantGuest: 80, wantHost: 8080},
+		{name: "same host and container port", input: "8080:8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 8080},
+		{name: "empty ip host and container", input: ":8080:8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 8080},
+		{name: "empty ip host and different container", input: ":8080:80", wantHostIP: "127.0.0.1", wantGuest: 80, wantHost: 8080},
+		{name: "loopback ip host and container", input: "127.0.0.1:8080:80", wantHostIP: "127.0.0.1", wantGuest: 80, wantHost: 8080},
+		{name: "loopback ip same host and container", input: "127.0.0.1:8080:8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 8080},
+		{name: "localhost host and container", input: "localhost:8080:80", wantHostIP: "127.0.0.1", wantGuest: 80, wantHost: 8080},
+		{name: "dynamic port with colon", input: ":8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with double colon", input: "::8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with ip", input: "127.0.0.1::8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with zero host", input: "0:8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "dynamic port with ip and zero host", input: "127.0.0.1:0:8080", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "ipv6 loopback with host and container", input: "[::1]:8080:80", wantHostIP: "::1", wantGuest: 80, wantHost: 8080},
+		{name: "ipv6 loopback dynamic", input: "[::1]::8080", wantHostIP: "::1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "ipv6 loopback plain container", input: "[::1]:8080", wantHostIP: "::1", wantGuest: 8080, wantHost: 0, wantDynamic: true},
+		{name: "tcp protocol suffix on plain port", input: "8080/tcp", wantHostIP: "127.0.0.1", wantGuest: 8080, wantHost: 8080},
+		{name: "tcp protocol suffix on host:container", input: "8080:80/tcp", wantHostIP: "127.0.0.1", wantGuest: 80, wantHost: 8080},
+		{name: "tcp protocol suffix on ip:host:container", input: "127.0.0.1:8080:80/TCP", wantHostIP: "127.0.0.1", wantGuest: 80, wantHost: 8080},
+		// Custom / Any-IP bindings (0.0.0.0, LAN IPs, IPv6)
+		{name: "all interfaces 0.0.0.0", input: "0.0.0.0:8080:80", wantHostIP: "0.0.0.0", wantGuest: 80, wantHost: 8080},
+		{name: "all interfaces 0.0.0.0 in bracket", input: "[0.0.0.0]:8080:80", wantHostIP: "0.0.0.0", wantGuest: 80, wantHost: 8080},
+		{name: "all interfaces ipv6 :: in bracket", input: "[::]:8080:80", wantHostIP: "::", wantGuest: 80, wantHost: 8080},
+		{name: "non-loopback ip", input: "192.168.1.1:8080:80", wantHostIP: "192.168.1.1", wantGuest: 80, wantHost: 8080},
+		{name: "non-loopback ip in bracket", input: "[192.168.1.1]:8080:80", wantHostIP: "192.168.1.1", wantGuest: 80, wantHost: 8080},
 		// Errors
 		{name: "empty", input: "", wantErr: "empty"},
 		{name: "invalid non-numeric", input: "abc", wantErr: "invalid"},
@@ -541,17 +548,13 @@ func TestParsePublishFlag(t *testing.T) {
 		{name: "invalid container port", input: "80:abc", wantErr: "invalid"},
 		{name: "invalid ip host port", input: "127.0.0.1:abc:80", wantErr: "invalid"},
 		{name: "invalid ip container port", input: "127.0.0.1:80:abc", wantErr: "invalid"},
+		{name: "invalid host ip", input: "999.999.999.999:8080:80", wantErr: "invalid host ip"},
 		{name: "port 0 as container port", input: "0", wantErr: "out of range"},
 		{name: "port 0 as container in mapping", input: "8080:0", wantErr: "out of range"},
 		{name: "container port out of range", input: "70000", wantErr: "out of range"},
 		{name: "host port out of range", input: "70000:80", wantErr: "out of range"},
 		{name: "unsupported udp protocol", input: "8080/udp", wantErr: "only tcp is supported"},
 		{name: "unsupported sctp protocol", input: "8080/sctp", wantErr: "only tcp is supported"},
-		{name: "all interfaces 0.0.0.0 rejected", input: "0.0.0.0:8080:80", wantErr: "only binds on loopback"},
-		{name: "all interfaces 0.0.0.0 in bracket rejected", input: "[0.0.0.0]:8080:80", wantErr: "only binds on loopback"},
-		{name: "all interfaces ipv6 :: in bracket rejected", input: "[::]:8080:80", wantErr: "only binds on loopback"},
-		{name: "non-loopback ip rejected", input: "192.168.1.1:8080:80", wantErr: "only binds on loopback"},
-		{name: "non-loopback ip in bracket rejected", input: "[192.168.1.1]:8080:80", wantErr: "only binds on loopback"},
 		{name: "too many colon segments", input: "1:2:3:4", wantErr: "invalid port spec"},
 		{name: "unclosed bracket", input: "[::1:8080", wantErr: "missing closing bracket"},
 	}
@@ -571,11 +574,95 @@ func TestParsePublishFlag(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParsePublishFlag(%q) unexpected error: %v", tt.input, err)
 			}
-			if spec.Guest != tt.wantGuest || spec.Host != tt.wantHost || spec.Dynamic != tt.wantDynamic {
-				t.Errorf("ParsePublishFlag(%q) = %+v, want Guest=%d, Host=%d, Dynamic=%v",
-					tt.input, spec, tt.wantGuest, tt.wantHost, tt.wantDynamic)
+			if spec.Guest != tt.wantGuest || spec.Host != tt.wantHost || spec.Dynamic != tt.wantDynamic || (tt.wantHostIP != "" && spec.HostIP != tt.wantHostIP) {
+				t.Errorf("ParsePublishFlag(%q) = %+v, want HostIP=%q, Guest=%d, Host=%d, Dynamic=%v",
+					tt.input, spec, tt.wantHostIP, tt.wantGuest, tt.wantHost, tt.wantDynamic)
 			}
 		})
+	}
+}
+
+func TestParseForwardHostFlag(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantGuestPort  int
+		wantTargetHost string
+		wantTargetPort int
+		wantErr        string
+	}{
+		{name: "full 3 segments", input: "2345:127.0.0.1:1234", wantGuestPort: 2345, wantTargetHost: "127.0.0.1", wantTargetPort: 1234},
+		{name: "full with hostname", input: "2345:db.corp.internal:5432", wantGuestPort: 2345, wantTargetHost: "db.corp.internal", wantTargetPort: 5432},
+		{name: "full with ipv6 in brackets", input: "2345:[::1]:1234", wantGuestPort: 2345, wantTargetHost: "::1", wantTargetPort: 1234},
+		{name: "full with localhost", input: "2345:localhost:1234", wantGuestPort: 2345, wantTargetHost: "localhost", wantTargetPort: 1234},
+		{name: "2 segments host and port", input: "db.corp.internal:5432", wantGuestPort: 5432, wantTargetHost: "db.corp.internal", wantTargetPort: 5432},
+		{name: "2 segments ipv4 and port", input: "127.0.0.1:5432", wantGuestPort: 5432, wantTargetHost: "127.0.0.1", wantTargetPort: 5432},
+		{name: "2 segments ipv6 in brackets and port", input: "[::1]:5432", wantGuestPort: 5432, wantTargetHost: "::1", wantTargetPort: 5432},
+		{name: "single port assumes localhost", input: "5432", wantGuestPort: 5432, wantTargetHost: "127.0.0.1", wantTargetPort: 5432},
+		// Errors
+		{name: "empty", input: "", wantErr: "empty"},
+		{name: "invalid guest port", input: "abc:127.0.0.1:1234", wantErr: "invalid"},
+		{name: "invalid target port", input: "2345:127.0.0.1:abc", wantErr: "invalid"},
+		{name: "guest port out of range", input: "70000:127.0.0.1:1234", wantErr: "out of range"},
+		{name: "target port out of range", input: "2345:127.0.0.1:70000", wantErr: "out of range"},
+		{name: "empty target host", input: "2345::1234", wantErr: "target host"},
+		{name: "too many segments", input: "1:2:3:4", wantErr: "invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := ParseForwardHostFlag(tt.input)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("ParseForwardHostFlag(%q) expected error containing %q, got nil", tt.input, tt.wantErr)
+				}
+				if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+					t.Fatalf("ParseForwardHostFlag(%q) error %q does not contain %q", tt.input, err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseForwardHostFlag(%q) unexpected error: %v", tt.input, err)
+			}
+			if spec.GuestPort != tt.wantGuestPort || spec.TargetHost != tt.wantTargetHost || spec.TargetPort != tt.wantTargetPort {
+				t.Errorf("ParseForwardHostFlag(%q) = %+v, want GuestPort=%d, TargetHost=%q, TargetPort=%d",
+					tt.input, spec, tt.wantGuestPort, tt.wantTargetHost, tt.wantTargetPort)
+			}
+		})
+	}
+}
+
+func TestParseRepo_ForwardHosts(t *testing.T) {
+	yamlText := `
+version: "1"
+ports:
+  - host_ip: "0.0.0.0"
+    host_port: 8080
+    guest_port: 80
+forward_hosts:
+  - guest_port: 2345
+    target_host: "127.0.0.1"
+    target_port: 1234
+  - "5432:db.corp.internal:5432"
+`
+	repo, err := ParseRepo([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseRepo failed: %v", err)
+	}
+	if len(repo.Ports) != 1 {
+		t.Fatalf("len(repo.Ports) = %d, want 1", len(repo.Ports))
+	}
+	if repo.Ports[0].HostIP != "0.0.0.0" || repo.Ports[0].Host != 8080 || repo.Ports[0].Guest != 80 {
+		t.Errorf("repo.Ports[0] = %+v, want HostIP=0.0.0.0, Host=8080, Guest=80", repo.Ports[0])
+	}
+	if len(repo.ForwardHosts) != 2 {
+		t.Fatalf("len(repo.ForwardHosts) = %d, want 2", len(repo.ForwardHosts))
+	}
+	if repo.ForwardHosts[0].GuestPort != 2345 || repo.ForwardHosts[0].TargetHost != "127.0.0.1" || repo.ForwardHosts[0].TargetPort != 1234 {
+		t.Errorf("repo.ForwardHosts[0] = %+v, want GuestPort=2345, TargetHost=127.0.0.1, TargetPort=1234", repo.ForwardHosts[0])
+	}
+	if repo.ForwardHosts[1].GuestPort != 5432 || repo.ForwardHosts[1].TargetHost != "db.corp.internal" || repo.ForwardHosts[1].TargetPort != 5432 {
+		t.Errorf("repo.ForwardHosts[1] = %+v, want GuestPort=5432, TargetHost=db.corp.internal, TargetPort=5432", repo.ForwardHosts[1])
 	}
 }
 

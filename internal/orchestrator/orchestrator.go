@@ -43,19 +43,23 @@ var CoreEnvVars = []string{"HOME", "TMPDIR", "SHELL", "PATH", "CODE_KEG"}
 // --preserve-fds flag to request; inheritance is verified by
 // TestSandboxFDInheritance (integration).
 const (
-	FDProxy   = 3 // Kanal A: egress proxy
-	FDDNS     = 4 // Kanal B: DNS
-	FDRunner  = 5 // Kanal C: delegation runner
-	FDPorts   = 6 // Kanal E: port back-channel (host → sandbox services)
-	FDSeccomp = 7 // Seccomp cBPF filter
-	// FDPreserved counts the extra FDs handed to bwrap via ExtraFiles.
-	FDPreserved = 4
+	FDProxy       = 3 // Kanal A: egress proxy
+	FDDNS         = 4 // Kanal B: DNS
+	FDRunner      = 5 // Kanal C: delegation runner
+	FDPorts       = 6 // Kanal E: port back-channel (host → sandbox services)
+	FDHostForward = 7 // Kanal F: host port forward (sandbox → host/network services)
+	FDSeccomp     = 8 // Seccomp cBPF filter
+	// FDPreserved counts the extra socketpair FDs handed to bwrap via ExtraFiles.
+	FDPreserved = 5
 )
 
 // EnvDelegation marks a live delegation channel on fd FDRunner. The guest
 // bridge binds /run/keg/runner.sock only when it is set — the marker
 // is the single source of truth (same pattern as KEG_PROXY/KEG_PORTS).
 const EnvDelegation = "KEG_RUNNER"
+
+// EnvForwardHosts marks a live host port forwarding channel on fd FDHostForward.
+const EnvForwardHosts = "KEG_HOST_FORWARD"
 
 // Overlay selects the repository write mode.
 type Overlay int
@@ -154,6 +158,8 @@ type Plan struct {
 	// Ports carries the resolved port back-channel entries (Kanal E);
 	// dynamic entries hold their pre-bound host listener.
 	Ports []portsfw.ResolvedPort
+	// ForwardHosts carries the host/network forwarding entries into the sandbox (Kanal F).
+	ForwardHosts []config.ForwardHostSpec
 	// DelegatedTasks carries the repo delegation whitelist (Kanal C).
 	// Empty disables the runner channel entirely.
 	DelegatedTasks config.DelegatedTasks

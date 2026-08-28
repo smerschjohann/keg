@@ -114,7 +114,7 @@ func netnsStageMain() {
 	// exactly once — every consumer shares these handles so the poller sees
 	// a single registration per descriptor.
 	channelFiles := make([]*os.File, FDPreserved)
-	for i, fd := range []int{FDProxy, FDDNS, FDRunner, FDPorts} {
+	for i, fd := range []int{FDProxy, FDDNS, FDRunner, FDPorts, FDHostForward} {
 		channelFiles[i] = os.NewFile(uintptr(fd), fmt.Sprintf("channel-%d", i))
 	}
 

@@ -28,22 +28,30 @@ import (
 // and serve; tests may leave it nil (static entries bind at start).
 type ResolvedPort struct {
 	Name     string // optional; enables KEG_PORT_<NAME>
+	HostIP   string // IP to bind on host (defaults to 127.0.0.1)
 	Guest    int    // port inside the sandbox
-	HostPort int    // loopback port on the host
+	HostPort int    // port on the host
 	Listener net.Listener
 }
 
 // Resolve turns parsed specs into concrete port entries. alloc supplies a
 // pre-bound listener for each dynamic spec (binding :0 up front makes the
 // allocation collision-free: the listener IS the reservation).
-func Resolve(specs []config.PortSpec, alloc func() (*net.Listener, error)) ([]ResolvedPort, error) {
+func Resolve(specs []config.PortSpec, alloc func(hostIP string) (*net.Listener, error)) ([]ResolvedPort, error) {
 	out := make([]ResolvedPort, 0, len(specs))
 	for _, s := range specs {
+		hostIP := s.HostIP
+		if hostIP == "" {
+			hostIP = "127.0.0.1"
+		}
 		if !s.Dynamic {
-			out = append(out, ResolvedPort{Name: s.Name, Guest: s.Guest, HostPort: s.Host})
+			out = append(out, ResolvedPort{Name: s.Name, HostIP: hostIP, Guest: s.Guest, HostPort: s.Host})
 			continue
 		}
-		ln, err := alloc()
+		if alloc == nil {
+			return nil, fmt.Errorf("allocate dynamic port %q: no allocator provided", s.Name)
+		}
+		ln, err := alloc(hostIP)
 		if err != nil {
 			return nil, fmt.Errorf("allocate dynamic port %q: %w", s.Name, err)
 		}
@@ -51,7 +59,7 @@ func Resolve(specs []config.PortSpec, alloc func() (*net.Listener, error)) ([]Re
 		if !ok {
 			return nil, fmt.Errorf("allocate dynamic port %q: listener address %T is not TCP", s.Name, (*ln).Addr())
 		}
-		out = append(out, ResolvedPort{Name: s.Name, Guest: s.Guest, HostPort: addr.Port, Listener: *ln})
+		out = append(out, ResolvedPort{Name: s.Name, HostIP: hostIP, Guest: s.Guest, HostPort: addr.Port, Listener: *ln})
 	}
 	return out, nil
 }

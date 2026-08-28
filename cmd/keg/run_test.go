@@ -1099,8 +1099,8 @@ func TestParsePublishFlags(t *testing.T) {
 		},
 		{
 			name:      "multiple docker syntax ports",
-			entries:   []string{"8080", ":8080:8080", "8080:80", "127.0.0.1:8080:8080", ":8080"},
-			wantCount: 5,
+			entries:   []string{"8080", ":8080:8080", "8080:80", "127.0.0.1:8080:8080", ":8080", "0.0.0.0:1234:2345"},
+			wantCount: 6,
 		},
 		{
 			name:        "invalid port syntax",
@@ -1109,10 +1109,10 @@ func TestParsePublishFlags(t *testing.T) {
 			errContains: "invalid",
 		},
 		{
-			name:        "non-loopback ip",
-			entries:     []string{"192.168.1.5:8080:80"},
+			name:        "invalid host ip",
+			entries:     []string{"999.999.999.999:8080:80"},
 			wantErr:     true,
-			errContains: "only binds on loopback",
+			errContains: "invalid host ip",
 		},
 	}
 
@@ -1130,6 +1130,54 @@ func TestParsePublishFlags(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("parsePublishFlags(%v) unexpected error: %v", tt.entries, err)
+			}
+			if len(specs) != tt.wantCount {
+				t.Fatalf("len(specs) = %d, want %d", len(specs), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestParseForwardHostFlags(t *testing.T) {
+	tests := []struct {
+		name        string
+		entries     []string
+		wantCount   int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "empty entries",
+			entries:   nil,
+			wantCount: 0,
+		},
+		{
+			name:      "valid forward host flags",
+			entries:   []string{"2345:127.0.0.1:1234", "5432:db.internal:5432", "5432"},
+			wantCount: 3,
+		},
+		{
+			name:        "invalid format",
+			entries:     []string{"abc:127.0.0.1:1234"},
+			wantErr:     true,
+			errContains: "invalid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			specs, err := parseForwardHostFlags(tt.entries)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseForwardHostFlags(%v) expected error, got nil", tt.entries)
+				}
+				if tt.errContains != "" && !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.errContains)) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseForwardHostFlags(%v) unexpected error: %v", tt.entries, err)
 			}
 			if len(specs) != tt.wantCount {
 				t.Fatalf("len(specs) = %d, want %d", len(specs), tt.wantCount)

@@ -188,18 +188,20 @@ TB2.
 | **I:** Cache-Poisoning — bösartiger Build schreibt manipulierte Artefakte in `GOMODCACHE`, die **spätere Builds außerhalb der Sandbox** infizieren | **Mittel–hoch** | Bewusster Trade-off des Warm-Cache-RW-Binds. Minderungen: `--isolate-caches` (Upper-Schicht statt Host-Write) für nicht-vertrauenswürdige Läufe; `--isolated-cache-name` für pro-Profil isolierte persistente Layer; Dokumentation der Restgefahr im README |
 | **T:** Layer-Manipulation zwischen Läufen (P4 lokal) | Niedrig | Layer liegen unter User-Kontrolle; Mode-000-Workdirs; Management-Kommandos mit Owner-Check |
 
-### 5.8 Port-Rückkanal (Kanal E, TB7)
+### 5.8 Port-Publishing & Port-Forwarding (Kanal E & Kanal F, TB7)
 
-Host-Clients (z. B. Playwright) erreichen Sandbox-Services über deklarierte
-Port-Forwards; Host-seitige Bindung ausschließlich auf `127.0.0.1`.
+Host-Clients (z. B. Playwright, Browser) erreichen Sandbox-Services über deklarierte
+Port-Forwards (Kanal E); Sandbox-Workloads erreichen deklarierte Host-/Netzwerk-Dienste
+über Inbound-Forwarding (Kanal F).
 
 | Threat | Bewertung | Maßnahme |
 |---|---|---|
-| **S/E:** Rückkanal als Exfil-Weg missbraucht | Niedrig | Datenrichtung ist inbound: Die Sandbox kann nur *annehmen*, was der Forwarder einbringt — Antworten gehen ausschließlich zum verbindenden Host-Client zurück. Ein neuer externer Weg entsteht nicht |
-| **I:** Lokale Mitnutzer (P4) verbinden sich zu `127.0.0.1:<port>` | Mittel | Auf Multi-User-Maschinen sind Loopback-Ports für alle lokalen User erreichbar. Minderungen: Dokumentation als Residualrisiko; sensible Services hinter App-Auth; alternative Unix-Socket-Weitergabe statt TCP-Port (Roadmap-Option); auf Single-User-Rechnern unkritisch |
-| **S:** Undeklarierte Ports exponieren | — (konstruktiv) | Deny-by-default: nur in `.keg.yaml` deklarierte Ports bekommen einen Listener; Guest-Forwarder verweigert Ziele außerhalb der Liste |
+| **S/E:** Rückkanal (Kanal E) als Exfil-Weg missbraucht | Niedrig | Datenrichtung ist inbound: Die Sandbox kann nur *annehmen*, was der Forwarder einbringt — Antworten gehen ausschließlich zum verbindenden Host-Client zurück. Ein neuer externer Weg entsteht nicht |
+| **I:** Exposition auf `0.0.0.0` oder externer IP (Kanal E) | Mittel | Standard-Bindung ist `127.0.0.1`. Öffnung auf `0.0.0.0` / LAN-IP erfordert explizite Deklaration (`host_ip` / `-p 0.0.0.0:port:port`) |
+| **S:** Undeklarierte Ports exponieren (Kanal E) | — (konstruktiv) | Deny-by-default: nur deklarierte Ports bekommen einen Listener; Guest-Forwarder verweigert Ziele außerhalb der Liste (`TestInvariant_PortChannelGuestDenyList`) |
+| **E:** Host-Forwarding (Kanal F) für unautorisierten Netzwerk-Egress missbraucht | Hoch | **Strict Whitelist & Fail-Closed:** Host-Forwarder akzeptiert ausschließlich deklarierte `forward_hosts`-Ziele; Verbindungen zu nicht freigegebenen Zielen werden sofort abgewiesen (`TestInvariant_HostForwardDenyList`) |
+| **I:** Angriff auf interne Host-Loopback-Services via Kanal F | Mittel | Deklaration ist repo-sichtbar und unterliegt dem Repository-Trust-Gate; Host-Dialer verbindet ausschließlich zu validierten Host:Port-Zielen |
 | **T:** Port-Squatting/Kollision auf dem Host | Niedrig | Kollision ⇒ klarer Fehler; `dynamic: true` + `KEG_PORT_*`-Env für kollisionssichere Vergabe |
-| **I:** Sandbox-Service hält Verbindungen für lokal vertrauenswürdig | Mittel | Aus Sicht der Sandbox-App kommt jede Verbindung von `127.0.0.1` (Forwarder). Apps dürfen Loopback nicht als Authentizitätsbeweis behandeln — dokumentierte Konvention |
 | **D:** Listener-Lifetime nach Sandbox-Ende | Niedrig | Listener leben im keg-Prozess, werden bei Close/Signal geschlossen |
 
 ### 5.9 Go-API / Guest-Agent (§8.2)

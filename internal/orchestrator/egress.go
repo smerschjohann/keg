@@ -91,8 +91,12 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 	for _, p := range ports {
 		ln := p.Listener
 		if ln == nil {
+			hostIP := p.HostIP
+			if hostIP == "" {
+				hostIP = "127.0.0.1"
+			}
 			var lc net.ListenConfig
-			bound, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p.HostPort)))
+			bound, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(hostIP, strconv.Itoa(p.HostPort)))
 			if err != nil {
 				s.closeMu.Lock()
 				for _, opened := range s.portListeners {
@@ -100,7 +104,7 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 				}
 				s.portListeners = nil
 				s.closeMu.Unlock()
-				return fmt.Errorf("ports forward %q: bind 127.0.0.1:%d: %w", p.Name, p.HostPort, err)
+				return fmt.Errorf("ports forward %q: bind %s:%d: %w", p.Name, hostIP, p.HostPort, err)
 			}
 			ln = bound
 		}
@@ -114,6 +118,32 @@ func (s *Sandbox) StartPortsForward(ports []portsfw.ResolvedPort) error {
 		s.closeMu.Unlock()
 		go func() { _ = portsfw.Forward(sess, ln, p.Guest) }()
 	}
+	return nil
+}
+
+// StartHostForward serves the host end of channel F (host port forward):
+// requests from the guest are accepted, verified against the allowed forward specs,
+// and connected to the target host/port on the host network.
+func (s *Sandbox) StartHostForward(specs []config.ForwardHostSpec) error {
+	s.closeMu.Lock()
+	if s.closed || s.hostForwardStarted || len(specs) == 0 {
+		s.closeMu.Unlock()
+		return nil
+	}
+	s.hostForwardStarted = true
+	s.closeMu.Unlock()
+
+	file := s.Channel(FDHostForward)
+	if file == nil {
+		if s.IsClosed() {
+			return nil
+		}
+		return fmt.Errorf("host forward: channel fd %d not available", FDHostForward)
+	}
+	sess := muxado.Server(file, nil)
+	go func() {
+		_ = portsfw.ServeHostForwarder(context.Background(), sess, specs, nil)
+	}()
 	return nil
 }
 

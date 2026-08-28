@@ -58,7 +58,14 @@
       "items": {
         "$ref": "#/definitions/PortSpec"
       },
-      "description": "Port forward back-channel exposing sandbox services on host loopback (127.0.0.1)."
+      "description": "Port forward back-channel exposing sandbox services on host loopback or specified IP."
+    },
+    "forward_hosts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ForwardHostSpec"
+      },
+      "description": "Host-port forwarding mapping host/network services into sandbox loopback."
     },
     "network": {
       "$ref": "#/definitions/Network",
@@ -148,17 +155,19 @@
       "oneOf": [
         {
           "type": "string",
-          "pattern": "^[0-9]+(:[0-9]+)?$",
-          "description": "Port specifier: 'port' (same on guest and host) or 'guest:host' (e.g. '5432:15432')."
+          "description": "Port specifier: 'port', 'host:guest', or '[ip:]host:guest' (e.g. '5432:15432' or '0.0.0.0:8080:80')."
         },
         {
           "type": "object",
-          "required": ["port"],
           "additionalProperties": false,
           "properties": {
             "name": {
               "type": "string",
               "description": "Logical name for the port mapping (required if dynamic is true)."
+            },
+            "host_ip": {
+              "type": "string",
+              "description": "Host IP address to bind the listener to (defaults to 127.0.0.1)."
             },
             "port": {
               "type": "integer",
@@ -166,9 +175,52 @@
               "maximum": 65535,
               "description": "Port number inside the sandbox."
             },
+            "guest_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port number inside the sandbox."
+            },
+            "host_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port number on the host."
+            },
             "dynamic": {
               "type": "boolean",
               "description": "Allocate host port dynamically and pass via KEG_PORT_<name> env variable."
+            }
+          }
+        }
+      ]
+    },
+    "ForwardHostSpec": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "SSH-style forward specifier: '[guest_port:]target_host:target_port' (e.g. '2345:127.0.0.1:1234' or '5432:db.internal:5432')."
+        },
+        {
+          "type": "object",
+          "required": ["guest_port", "target_host", "target_port"],
+          "additionalProperties": false,
+          "properties": {
+            "guest_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port number to listen on inside the sandbox (127.0.0.1)."
+            },
+            "target_host": {
+              "type": "string",
+              "description": "Target hostname or IP address on host/network."
+            },
+            "target_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Target port number on host/network."
             }
           }
         }

@@ -38,27 +38,34 @@ func TestResolve(t *testing.T) {
 			specs: []config.PortSpec{
 				{Guest: 3000, Host: 3000},
 			},
-			want: []ResolvedPort{{Name: "", Guest: 3000, HostPort: 3000}},
+			want: []ResolvedPort{{Name: "", HostIP: "127.0.0.1", Guest: 3000, HostPort: 3000}},
 		},
 		{
 			name: "src:dst form maps sandbox port to distinct host port",
 			specs: []config.PortSpec{
 				{Guest: 5432, Host: 15432},
 			},
-			want: []ResolvedPort{{Name: "", Guest: 5432, HostPort: 15432}},
+			want: []ResolvedPort{{Name: "", HostIP: "127.0.0.1", Guest: 5432, HostPort: 15432}},
 		},
 		{
 			name: "named mapping form carries the name",
 			specs: []config.PortSpec{
 				{Name: "dev-server", Guest: 8080, Host: 8080},
 			},
-			want: []ResolvedPort{{Name: "dev-server", Guest: 8080, HostPort: 8080}},
+			want: []ResolvedPort{{Name: "dev-server", HostIP: "127.0.0.1", Guest: 8080, HostPort: 8080}},
+		},
+		{
+			name: "custom host ip is preserved",
+			specs: []config.PortSpec{
+				{HostIP: "0.0.0.0", Guest: 80, Host: 8080},
+			},
+			want: []ResolvedPort{{Name: "", HostIP: "0.0.0.0", Guest: 80, HostPort: 8080}},
 		},
 		{
 			name: "dynamic specs are allocated in declaration order",
 			specs: []config.PortSpec{
 				{Guest: 3000, Host: 3000},
-				{Name: "dev-server", Guest: 8080, Dynamic: true},
+				{Name: "dev-server", HostIP: "0.0.0.0", Guest: 8080, Dynamic: true},
 				{Name: "second", Guest: 9090, Dynamic: true},
 			},
 			alloc: func(call int) (*net.Listener, error) {
@@ -67,9 +74,9 @@ func TestResolve(t *testing.T) {
 				return ptrListener(ln), nil
 			},
 			want: []ResolvedPort{
-				{Name: "", Guest: 3000, HostPort: 3000},
-				{Name: "dev-server", Guest: 8080, HostPort: 44111},
-				{Name: "second", Guest: 9090, HostPort: 44222},
+				{Name: "", HostIP: "127.0.0.1", Guest: 3000, HostPort: 3000},
+				{Name: "dev-server", HostIP: "0.0.0.0", Guest: 8080, HostPort: 44111},
+				{Name: "second", HostIP: "127.0.0.1", Guest: 9090, HostPort: 44222},
 			},
 		},
 		{
@@ -88,7 +95,7 @@ func TestResolve(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			call := 0
-			got, err := Resolve(tt.specs, func() (*net.Listener, error) {
+			got, err := Resolve(tt.specs, func(hostIP string) (*net.Listener, error) {
 				if tt.alloc == nil {
 					t.Fatal("allocator called for non-dynamic spec")
 					return nil, nil

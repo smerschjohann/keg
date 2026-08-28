@@ -406,6 +406,11 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		}
 	}
 
+	if len(repo.ForwardHosts) > 0 {
+		plan.ForwardHosts = append(plan.ForwardHosts, repo.ForwardHosts...)
+		plan.EnvSet[EnvForwardHosts] = portsfw.FormatForwardHosts(plan.ForwardHosts)
+	}
+
 	tasks := repo.DelegatedTasks
 	if env := os.Getenv("RUNNER_WHITELIST"); env != "" {
 		for _, name := range strings.Split(env, ",") {
@@ -506,6 +511,13 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 	if len(plan.Ports) > 0 {
 		if err := sb.StartPortsForward(plan.Ports); err != nil {
 			return fmt.Errorf("start ports forward: %w", err)
+		}
+	}
+
+	// Host port forward channel (Sandbox -> Host)
+	if len(plan.ForwardHosts) > 0 {
+		if err := sb.StartHostForward(plan.ForwardHosts); err != nil {
+			return fmt.Errorf("start host forward: %w", err)
 		}
 	}
 
@@ -667,9 +679,12 @@ func AddPortsToPlan(plan *Plan, specs []config.PortSpec) error {
 	if len(specs) == 0 {
 		return nil
 	}
-	resolved, err := portsfw.Resolve(specs, func() (*net.Listener, error) {
+	resolved, err := portsfw.Resolve(specs, func(hostIP string) (*net.Listener, error) {
 		var lc net.ListenConfig
-		ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if hostIP == "" {
+			hostIP = "127.0.0.1"
+		}
+		ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(hostIP, "0"))
 		if err != nil {
 			return nil, err
 		}

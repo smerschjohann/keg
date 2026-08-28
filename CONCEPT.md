@@ -676,46 +676,65 @@ dieselbe effektive `storage_base` des jeweiligen Ziel-Repos. Die
 **gemerged** — eine Maschine kann lokal mehr freigeben, ohne das Repo
 anzufassen.
 
-### 4.9 Rückkanal: Port-Forwarding (Host → Sandbox-Loopback)
+### 4.9 Port-Publishing & Port-Forwarding (Host ⇄ Sandbox)
 
-Dev-Server laufen **in** der Sandbox — aber Tests wie Playwright laufen auf
-dem **Host** (bzw. als delegierter Host-Job) und müssen die Services
+#### 4.9.1 Port-Publishing: Host → Sandbox-Loopback (Kanal E)
+
+Dev-Server laufen **in** der Sandbox — aber Tests wie Playwright oder Browser laufen auf
+dem **Host** (bzw. als delegierter Host-Job oder externer Client) und müssen die Services
 erreichen können. Da die Sandbox nur eigenes Loopback hat, gibt es dafür
 einen kontrollierten **Rückkanal (Kanal E)**: Der Host exponiert deklarierte
-Sandbox-Ports auf seinem eigenen Loopback.
+Sandbox-Ports auf seinen Interfaces (Default: `127.0.0.1`).
 
 ```
-Host 127.0.0.1:3000 ──► Listener (keg) ══ Kanal E (muxado) ══► Guest-Forwarder
-                                                                     └─► 127.0.0.1:3000 in der Sandbox
+Host [host_ip]:[host_port] ──► Listener (keg) ══ Kanal E (muxado) ══► Guest-Forwarder
+                                                                         └─► 127.0.0.1:[guest_port] in der Sandbox
 ```
 
-* **Deklaration im Repo (Bedarf):**
+* **Deklaration im Repo / CLI:**
   ```yaml
   ports:
     - "3000"              # Sandbox :3000  -> Host 127.0.0.1:3000
     - "5432:15432"        # Sandbox :5432  -> Host 127.0.0.1:15432
+    - host_ip: "0.0.0.0"
+      host_port: 8080
+      guest_port: 80
     - name: dev-server
       port: 8080
       dynamic: true       # Host-Port frei wählbar, wird als KEG_PORT_dev-server
-                          # in die Sandbox-Env geschrieben (Kollisionssicher)
+                          # in die Sandbox-Env geschrieben (kollisionssicher)
   ```
+  CLI: `keg run -p 1234:2345` oder `keg run -p 0.0.0.0:1234:2345`.
 * **Mechanik:** Host-seitig bindet keg je Eintrag einen TCP-Listener;
   jede eingehende Verbindung öffnet einen muxado-Stream über Kanal E,
   der Guest-Forwarder verbindet sie mit dem Ziel auf dem Sandbox-Loopback.
-  Nur TCP (UDP-Dev-Dienste sind bis auf Weiteres out of scope).
-* **Bind-Regel:** Host-seitig wird ausschließlich `127.0.0.1` gebunden —
-  niemals `0.0.0.0`. Damit bleibt der Rückkanal lokal; andere Rechner
-  sehen nichts.
-* **Isolation bleibt intakt:** Die Sandbox erhält weiterhin **keinen**
-  ausgehenden Weg — sie kann Verbindungen nur *annehmen*, die der Forwarder
-  einbringt. Invarianten 1 und 2 (§12 Threat Model) gelten unverändert:
-  auch dieser Verkehr läuft durch einen polizeilich kontrollierten Kanal.
-* **Lifecycle:** Listener werden beim Start gebunden (Kollision ⇒ klarer
-  Fehler oder `dynamic: true`) und bei Sandbox-Ende freigegeben.
-* **Playwright-Workflow:** Der delegierte Host-Job (`just delegate
-  test-playwright …`) erreicht den in der Sandbox laufenden Dev-Server
-  schlicht unter `http://127.0.0.1:<port>` — kein Umweg über Container-
-  Netze, keine IP-Ermittlung.
+* **Bind-Regel:** Standardmäßig bindet keg ausschließlich `127.0.0.1`.
+  Bindung an `0.0.0.0` oder spezifische Host-IPs ist über explizite Angabe
+  (`host_ip` bzw. `-p 0.0.0.0:port:port`) möglich.
+
+#### 4.9.2 Host-Port-Forwarding: Sandbox → Host / Any-IP (Kanal F)
+
+Dienste auf dem Host (z. B. lokale Datenbanken, Mock-Server) oder im Firmennetzwerk
+können in die Sandbox über das SSH-Muster (`-L`) hineingereicht werden.
+Ein Prozess in der Sandbox verbindet sich zu `127.0.0.1:[guest_port]`; der
+Guest-Forwarder tunnelt die Verbindung über **Kanal F** zum Host-Forwarder,
+welcher das Ziel auf dem Host oder im Netzwerk anwählt.
+
+```
+App in Sandbox ──► 127.0.0.1:[guest_port] ══ Kanal F (muxado) ══► Host-Forwarder
+                                                                     └─► dial [target_host]:[target_port]
+```
+
+* **Deklaration im Repo / CLI:**
+  ```yaml
+  forward_hosts:
+    - "2345:127.0.0.1:1234"      # Sandbox :2345 -> Host 127.0.0.1:1234
+    - "5432:db.corp.internal:5432" # Sandbox :5432 -> db.corp.internal:5432
+  ```
+  CLI: `keg run -L 2345:127.0.0.1:1234` oder `-L 5432:db.corp.internal:5432`.
+* **Isolation bleibt intakt:** Fail-closed & deny-by-default — der Host-Forwarder
+  akzeptiert ausschließlich Streams zu Zielen, die in `forward_hosts` bzw. via `-L`
+  deklariert sind. Alle anderen Verbindungsversuche werden sofort geschlossen.
 
 ---
 

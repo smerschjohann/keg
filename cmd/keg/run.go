@@ -14,6 +14,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
+	"github.com/smerschjohann/keg/internal/portsfw"
 )
 
 // buildRunPlan loads and validates all configuration for a sandbox run and
@@ -89,6 +90,21 @@ func parsePublishFlags(entries []string) ([]config.PortSpec, error) {
 	return specs, nil
 }
 
+func parseForwardHostFlags(entries []string) ([]config.ForwardHostSpec, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	specs := make([]config.ForwardHostSpec, 0, len(entries))
+	for _, entry := range entries {
+		spec, err := config.ParseForwardHostFlag(entry)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
 var (
 	upstreamProxyFromEnv = orchestrator.UpstreamProxyFromEnv
 	firstHostNameserver  = orchestrator.FirstHostNameserver
@@ -152,6 +168,11 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		return err
 	}
 
+	cliForwardHosts, err := parseForwardHostFlags(c.StringSlice("forward-host"))
+	if err != nil {
+		return err
+	}
+
 	plan, userCfg, err := orchestrator.BuildPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName, instanceName, cliVars)
 	if err != nil {
 		return err
@@ -169,6 +190,14 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		if err := orchestrator.AddPortsToPlan(&plan, cliPorts); err != nil {
 			return err
 		}
+	}
+
+	if len(cliForwardHosts) > 0 {
+		plan.ForwardHosts = append(plan.ForwardHosts, cliForwardHosts...)
+		if plan.EnvSet == nil {
+			plan.EnvSet = make(map[string]string)
+		}
+		plan.EnvSet[orchestrator.EnvForwardHosts] = portsfw.FormatForwardHosts(plan.ForwardHosts)
 	}
 
 	plan.Command = c.Args().Slice()

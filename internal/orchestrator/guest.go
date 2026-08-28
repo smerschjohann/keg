@@ -174,6 +174,9 @@ func startConfiguredBridges() func() {
 	if marker := os.Getenv(EnvPortsForward); marker != "" {
 		stops = append(stops, startPortForwarderFromFD(FDPorts, marker))
 	}
+	if marker := os.Getenv(EnvForwardHosts); marker != "" {
+		stops = append(stops, startHostForwarderFromFD(FDHostForward, marker))
+	}
 	if os.Getenv(EnvDelegation) == "1" {
 		stops = append(stops, startRunnerBridgeFromFD(FDRunner))
 	}
@@ -181,6 +184,34 @@ func startConfiguredBridges() func() {
 		for _, stop := range stops {
 			stop()
 		}
+	}
+}
+
+// startHostForwarderFromFD serves the guest end of channel F (host port forward):
+// it binds listeners on 127.0.0.1:<guestPort> inside the sandbox for every declared
+// forward_host entry and tunnels connections over fd FDHostForward to the host forwarder.
+func startHostForwarderFromFD(fd int, forwardHostsMarker string) func() {
+	specs, err := portsfw.ParseForwardHostsEnv(forwardHostsMarker)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "keg guest: parse host forwards: %v\n", err)
+		return func() {}
+	}
+	file := os.NewFile(uintptr(fd), "keg-hostforward-channel")
+	if file == nil {
+		fmt.Fprintf(os.Stderr, "keg guest: host forward channel fd %d missing\n", fd)
+		return func() {}
+	}
+	sess := muxado.Client(file, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = portsfw.ServeGuestForwarders(ctx, sess, specs)
+	}()
+	return func() {
+		cancel()
+		_ = sess.Close()
+		<-done
 	}
 }
 

@@ -38,11 +38,12 @@ type Sandbox struct {
 	raw    *rawEndpoints // ip->endpoint correlation (transparent mode)
 	rawCfg rawCfg
 
-	dnsStarted     bool
-	proxyStarted   bool
-	portsStarted   bool
-	runnerStarted  bool
-	secretsStarted bool
+	dnsStarted         bool
+	proxyStarted       bool
+	portsStarted       bool
+	hostForwardStarted bool
+	runnerStarted      bool
+	secretsStarted     bool
 
 	dnsAudit    io.Writer
 	proxyAudit  io.Writer
