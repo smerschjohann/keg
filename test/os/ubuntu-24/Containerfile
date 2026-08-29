@@ -1,0 +1,44 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    git \
+    make \
+    gcc \
+    pkg-config \
+    meson \
+    ninja-build \
+    libcap-dev \
+    libseccomp-dev \
+    sudo \
+    apparmor \
+    util-linux \
+    iproute2 \
+    nftables \
+    socat \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build and install bwrap 0.11.0 (Ubuntu 24.04 only ships 0.9.0 which lacks --overlay-src)
+RUN git clone --depth 1 --branch v0.11.0 https://github.com/containers/bubblewrap.git /tmp/bwrap && \
+    cd /tmp/bwrap && \
+    meson setup _build --prefix=/usr && \
+    ninja -C _build && \
+    ninja -C _build install && \
+    rm -rf /tmp/bwrap
+
+# Install Go 1.27.0
+RUN curl -fsSL https://go.dev/dl/go1.27.0.linux-amd64.tar.gz -o /tmp/go.tar.gz && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    ln -s /usr/local/go/bin/go /usr/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /usr/bin/gofmt && \
+    rm /tmp/go.tar.gz
+
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Ubuntu 24.04 default non-root user 'ubuntu' (uid 1000:1000)
+RUN echo "ubuntu ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+USER ubuntu
+WORKDIR /workspace

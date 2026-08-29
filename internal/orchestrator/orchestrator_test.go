@@ -1248,8 +1248,8 @@ func TestUnshareStageArgv(t *testing.T) {
 	}
 	wantFlags := []string{
 		"-U",
-		fmt.Sprintf("--map-users=%d:%d:1", os.Getuid(), os.Getuid()),
-		fmt.Sprintf("--map-groups=%d:%d:1", os.Getgid(), os.Getgid()),
+		fmt.Sprintf("--map-user=%d", os.Getuid()),
+		fmt.Sprintf("--map-group=%d", os.Getgid()),
 		"-n",
 		"-m",
 		"-p",

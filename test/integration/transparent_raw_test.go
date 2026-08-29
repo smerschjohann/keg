@@ -11,8 +11,6 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
-
-	miek "github.com/miekg/dns"
 )
 
 const transparentRawRepoConfig = `
@@ -39,43 +37,6 @@ func outboundIP(t *testing.T) string {
 		t.Skip("only loopback routing available")
 	}
 	return ip.String()
-}
-
-// fakeDNSUpstream serves A answers for exactly one fixed name→IP mapping
-// and NXDOMAIN for everything else — a controlled replacement for kube-dns.
-func fakeDNSUpstream(t *testing.T, name, ip string) string {
-	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("fake dns listen: %v", err)
-	}
-	go func() {
-		buf := make([]byte, 1500)
-		for {
-			n, addr, rerr := pc.ReadFrom(buf)
-			if rerr != nil {
-				return
-			}
-			q := new(miek.Msg)
-			if q.Unpack(buf[:n]) != nil || len(q.Question) == 0 {
-				continue
-			}
-			m := new(miek.Msg)
-			m.SetReply(q)
-			if strings.EqualFold(q.Question[0].Name, miek.Fqdn(name)) {
-				rr, rerr2 := miek.NewRR(fmt.Sprintf("%s 5 IN A %s", miek.Fqdn(name), ip))
-				if rerr2 == nil {
-					m.Answer = append(m.Answer, rr)
-				}
-			} else {
-				m.Rcode = miek.RcodeNameError
-			}
-			out, _ := m.Pack()
-			_, _ = pc.WriteTo(out, addr)
-		}
-	}()
-	t.Cleanup(func() { _ = pc.Close() })
-	return pc.LocalAddr().String()
 }
 
 // wildcardEchoOrigin listens on all interfaces so dialing <podIP>:<port>
@@ -136,6 +97,7 @@ if [ -n "$reply" ]; then echo deny-failed; else echo deny-ok; fi
 	out, code := runInSandboxWithConfig(t, dir, cfg, orchestrator.OverlayPlain,
 		script,
 		func(plan *orchestrator.Plan) {
+			plan.Command = []string{"/bin/bash", "-c", script}
 			plan.Transparent = true
 			plan.ResolvConf = writeTempFile(t, "resolv.conf",
 				"nameserver 127.0.0.1\noptions timeout:1 retries:1\n")

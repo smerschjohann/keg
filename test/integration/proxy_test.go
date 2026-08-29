@@ -35,6 +35,7 @@ func TestSandboxProxyChannelDenied(t *testing.T) {
 		// legitimately tear the channels down before we can serve them.
 		`sleep 2; echo "proxy=$HTTP_PROXY"; TARGET=blocked.example.com `+speakCONNECTViaBridge,
 		func(plan *orchestrator.Plan) {
+			plan.Command = []string{"/bin/bash", "-c", `sleep 2; echo "proxy=$HTTP_PROXY"; TARGET=blocked.example.com ` + speakCONNECTViaBridge}
 			for k, v := range orchestrator.ProxyEnv([]string{"proxy.golang.org"}) {
 				plan.EnvSet[k] = v
 			}

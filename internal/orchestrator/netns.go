@@ -72,8 +72,8 @@ func unshareStageArgv(unshareBin, selfExe string, cfg *stageConfig) ([]string, s
 	return []string{
 		unshareBin,
 		"-U",
-		fmt.Sprintf("--map-users=%d:%d:1", uid, uid),
-		fmt.Sprintf("--map-groups=%d:%d:1", gid, gid),
+		fmt.Sprintf("--map-user=%d", uid),
+		fmt.Sprintf("--map-group=%d", gid),
 		"-n",
 		"-m",
 		"-p",

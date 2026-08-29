@@ -634,10 +634,18 @@ templates:
 	if len(plan.Mounts) == 0 {
 		t.Fatal("expected template mounts for go")
 	}
+	var cacheMounts int
 	for _, m := range plan.Mounts {
+		if m.Mode == config.MountRO {
+			continue // skip non-cache read-only binds (e.g. host GOROOT)
+		}
+		cacheMounts++
 		if m.Mode != config.MountEphemeral {
 			t.Errorf("mount %s mode = %v, want ephemeral", m.Dest, m.Mode)
 		}
+	}
+	if cacheMounts == 0 {
+		t.Fatal("expected at least one cache mount for go template")
 	}
 }
 
@@ -662,7 +670,12 @@ paths:
 	if len(plan.Mounts) == 0 {
 		t.Fatal("expected template mounts for go")
 	}
+	var cacheMounts int
 	for _, m := range plan.Mounts {
+		if m.Mode == config.MountRO {
+			continue // skip non-cache read-only binds (e.g. host GOROOT)
+		}
+		cacheMounts++
 		if m.Mode != config.MountDisk {
 			t.Errorf("mount %s mode = %v, want disk", m.Dest, m.Mode)
 		}
@@ -672,6 +685,9 @@ paths:
 		if !strings.Contains(m.OverlayRW, "cache-test-build") {
 			t.Errorf("mount %s rw path %q must contain cache-test-build", m.Dest, m.OverlayRW)
 		}
+	}
+	if cacheMounts == 0 {
+		t.Fatal("expected at least one cache mount for go template")
 	}
 }
 

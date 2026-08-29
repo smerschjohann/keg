@@ -8,10 +8,15 @@ package integration
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	miek "github.com/miekg/dns"
 
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/orchestrator"
@@ -125,4 +130,55 @@ func writeTempFile(t *testing.T, name, content string) string {
 // mountFile returns a read-only file bind for the plan.
 func mountFile(hostPath, dest string) config.Mount {
 	return config.Mount{Src: hostPath, Dest: dest, Mode: config.MountRO}
+}
+
+// hostUpstream returns the host's own resolver from /etc/resolv.conf.
+func hostUpstream(t *testing.T) string {
+	t.Helper()
+	out := readFileOrDie(t, "/etc/resolv.conf")
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "nameserver ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "nameserver "))
+		}
+	}
+	t.Skip("no nameserver in host /etc/resolv.conf")
+	return ""
+}
+
+// fakeDNSUpstream serves A answers for exactly one fixed name→IP mapping
+// and NXDOMAIN for everything else — a controlled DNS upstream fixture for tests.
+func fakeDNSUpstream(t *testing.T, name, ip string) string {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("fake dns listen: %v", err)
+	}
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			n, addr, rerr := pc.ReadFrom(buf)
+			if rerr != nil {
+				return
+			}
+			q := new(miek.Msg)
+			if q.Unpack(buf[:n]) != nil || len(q.Question) == 0 {
+				continue
+			}
+			m := new(miek.Msg)
+			m.SetReply(q)
+			if strings.EqualFold(q.Question[0].Name, miek.Fqdn(name)) {
+				rr, rerr2 := miek.NewRR(fmt.Sprintf("%s 5 IN A %s", miek.Fqdn(name), ip))
+				if rerr2 == nil {
+					m.Answer = append(m.Answer, rr)
+				}
+			} else {
+				m.Rcode = miek.RcodeNameError
+			}
+			out, _ := m.Pack()
+			_, _ = pc.WriteTo(out, addr)
+		}
+	}()
+	t.Cleanup(func() { _ = pc.Close() })
+	return pc.LocalAddr().String()
 }

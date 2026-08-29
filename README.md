@@ -43,6 +43,33 @@ All communication between the sandbox and host occurs strictly through controlle
 
 ## 2. Installation & CLI Usage
 
+### Prerequisites & System Requirements
+
+* **Linux Kernel:** ≥ 5.11 with unprivileged user namespaces enabled (`kernel.unprivileged_userns_clone = 1` / `user.max_user_namespaces > 0`).
+* **util-linux:** `unshare` utility available on `PATH`.
+* **Bubblewrap (`bwrap`):** **`bwrap ≥ 0.11.0`** is required for `--ephemeral` and disk overlay mounts (`--overlay-src`, `--tmp-overlay`).
+
+#### Note for Ubuntu LTS (24.04 / 22.04) and Debian 12 (Bookworm)
+
+Distribution package repositories in older LTS releases only provide older versions of bubblewrap (e.g., Ubuntu 24.04 LTS ships `bwrap 0.9.0`, Debian 12 ships `0.8.0`), which lack overlay mount support.
+
+To build and install `bwrap 0.11.0` on Ubuntu 24.04 LTS / Debian:
+
+```bash
+# 1. Install build dependencies
+sudo apt-get update && sudo apt-get install -y \
+  git make gcc meson ninja-build libcap-dev libseccomp-dev pkg-config
+
+# 2. Clone and build bwrap 0.11.0 (compiles in ~2 seconds)
+git clone --depth 1 --branch v0.11.0 https://github.com/containers/bubblewrap.git /tmp/bwrap
+cd /tmp/bwrap && meson setup _build --prefix=/usr && ninja -C _build && sudo ninja -C _build install
+
+# 3. Verify installed version (must be >= 0.11.0)
+bwrap --version
+```
+
+*(Modern distributions such as Fedora 40+, Debian Trixie/Sid, and Ubuntu 24.10+ already provide `bwrap ≥ 0.11.0` in their default package repositories).*
+
 ### Building
 
 ```bash

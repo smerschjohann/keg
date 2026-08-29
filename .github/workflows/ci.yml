@@ -9,21 +9,48 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
           args: --timeout 5m
 
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Enable unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Cache bubblewrap
+        id: cache-bwrap
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bwrap
+          key: bwrap-0.11.0-${{ runner.os }}
+      - name: Install bubblewrap >= 0.11
+        run: |
+          if [ ! -f ~/.cache/bwrap/bwrap ]; then
+            sudo apt-get update && sudo apt-get install -y \
+              meson ninja-build libcap-dev libseccomp-dev pkg-config
+            rm -rf /tmp/bwrap
+            git clone --depth 1 --branch v0.11.0 https://github.com/containers/bubblewrap.git /tmp/bwrap
+            cd /tmp/bwrap
+            meson setup _build --prefix=/usr
+            ninja -C _build
+            mkdir -p ~/.cache/bwrap
+            cp _build/bwrap ~/.cache/bwrap/bwrap
+            rm -rf /tmp/bwrap
+          fi
+          sudo install -m 0755 ~/.cache/bwrap/bwrap /usr/bin/bwrap
+          sudo ln -sf /usr/bin/bwrap /usr/local/bin/bwrap
+          sudo ln -sf /usr/bin/bwrap /usr/sbin/bwrap
+          bwrap --version
       - run: make tidy
       - run: make build
       - run: make test
@@ -31,11 +58,38 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # bubblewrap provides the sandbox runtime; skip logic lives in the
-      # tests themselves (visible skip with reason, never silent).
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Enable unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Cache bubblewrap
+        id: cache-bwrap
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bwrap
+          key: bwrap-0.11.0-${{ runner.os }}
+      - name: Install bubblewrap >= 0.11
+        run: |
+          if [ ! -f ~/.cache/bwrap/bwrap ]; then
+            sudo apt-get update && sudo apt-get install -y \
+              meson ninja-build libcap-dev libseccomp-dev pkg-config
+            rm -rf /tmp/bwrap
+            git clone --depth 1 --branch v0.11.0 https://github.com/containers/bubblewrap.git /tmp/bwrap
+            cd /tmp/bwrap
+            meson setup _build --prefix=/usr
+            ninja -C _build
+            mkdir -p ~/.cache/bwrap
+            cp _build/bwrap ~/.cache/bwrap/bwrap
+            rm -rf /tmp/bwrap
+          fi
+          sudo install -m 0755 ~/.cache/bwrap/bwrap /usr/bin/bwrap
+          sudo ln -sf /usr/bin/bwrap /usr/local/bin/bwrap
+          sudo ln -sf /usr/bin/bwrap /usr/sbin/bwrap
+          bwrap --version
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y socat iproute2 nftables
       - run: make integration

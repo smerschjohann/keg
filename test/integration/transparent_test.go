@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -24,9 +25,12 @@ network:
 // serviceaccount CA (real cluster endpoint, no fakes).
 func TestSandboxTransparentMode(t *testing.T) {
 	dir := t.TempDir()
-	upstream := hostUpstream(t)
 	caPath := "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-	caData := readFileOrDie(t, caPath) // skip happens inside
+	if _, err := os.Stat(caPath); err != nil {
+		t.Skipf("skipping in-cluster transparent mode test: serviceaccount CA not found (%v)", err)
+	}
+	upstream := hostUpstream(t)
+	caData := readFileOrDie(t, caPath)
 
 	script := `
 sleep 1

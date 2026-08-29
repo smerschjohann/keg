@@ -11,7 +11,7 @@
 | **Host-Kernel** | Linux ≥ 5.11 (empfohlen ≥ 5.19) | Unprivilegierte User-Namespaces (`CLONE_NEWUSER`), Loopback-Routing und moderne Namespace-Features. |
 | **Kernel Sysctl** | `user.max_user_namespaces > 0`<br>`kernel.unprivileged_userns_clone = 1` | Erlaubt das Erzeugen unprivilegierter User-Namespaces für `unshare` und `bwrap`. |
 | **Bubblewrap (`bwrap`)** | **`bwrap ≥ 0.11.0`** | `keg` verwendet `--overlay-src` und `--tmp-overlay` für `--ephemeral`- und Layer-Mounts. Ältere Versionen (z. B. `0.8.0` in Debian 12 Bookworm) unterstützen `--overlay-src` nicht. |
-| **util-linux** | `unshare` vorhanden | Die `netns`-Stage von `keg` benötigt `unshare -U --map-users=<uid>:<uid>:1 --map-groups=<gid>:<gid>:1 -n -m -p --fork --keep-caps`. |
+| **util-linux** | `unshare` vorhanden | Die `netns`-Stage von `keg` benötigt `unshare -U --map-user=<uid> --map-group=<gid> -n -m -p --fork --keep-caps`. |
 | **Container-Capabilities (Root im Container)** | `--cap-add=SYS_ADMIN` | Notwendig, damit der Root-Prozess im Container Namespaces (`unshare`/`clone`) und Mounts anlegen kann. |
 | **Container-Seccomp** | Standard-Seccomp oder `seccomp=unconfined` | Manche restriktive Standard-Seccomp-Profile blockieren `unshare` oder `clone3`. |
 | **Landlock LSM** | `security.landlock: auto` (Default) | Landlock ist optional / defense-in-depth; im Modus `auto` schlägt der Start nicht fehl, wenn Landlock im Container-Kernel nicht aktivierbar ist. |
