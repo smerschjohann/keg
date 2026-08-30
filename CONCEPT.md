@@ -572,6 +572,10 @@ paths:
   go_mod_cache: ""        # leer = auto
   go_build_cache: ""
 
+  # Zusätzliche Verzeichnisse für den Sandbox-$PATH:
+  prepend: []             # vor Standard-Sandbox-Pfaden voranstellen
+  append: []              # hinter Standard-Sandbox-Pfaden anhängen
+
 runner:
   just_bin: just          # `just`-Binary für delegierte Tasks
   extra_exact: []         # zusätzliche Freigaben (global)
@@ -756,6 +760,17 @@ vars:
 # Sprach-Templates: bringen Toolchain-Env und Cache-Mounts mit
 templates:
   - go
+
+# Zusätzliche Sandbox-PATH-Verzeichnisse (template-bar; relative Pfade
+# beziehen sich auf das Repo-Root, ~ bezieht sich auf das Sandbox-Home):
+paths:
+  prepend:
+    - node_modules/.bin
+    - vendor/bin
+  append:
+    - /opt/fallback/bin
+
+
 
 # First-class Environment-Steuerung für die Sandbox (Deny-by-default).
 # Werte sind template-bar ({{ .Vars… }}, {{ .Env… }}).

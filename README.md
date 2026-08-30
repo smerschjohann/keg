@@ -227,7 +227,17 @@ version: "1"
 templates:
   - golang
 
+# Additional PATH directories in sandbox (prepended / appended to $PATH)
+paths:
+  prepend:
+    - node_modules/.bin
+    - vendor/bin
+  append:
+    - /opt/fallback/bin
+
+
 # Environment variable controls (Deny-by-default)
+
 env:
   inherit:
     - LANG

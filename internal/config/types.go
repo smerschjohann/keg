@@ -250,11 +250,19 @@ type DelegatedTasks struct {
 	Raw      []RawRule `yaml:"raw"`
 }
 
+// RepoPaths holds path extensions for the sandbox (repo config).
+type RepoPaths struct {
+	Extra   []string `yaml:"extra"`
+	Prepend []string `yaml:"prepend"`
+	Append  []string `yaml:"append"`
+}
+
 // Repo mirrors .keg.yaml.
 type Repo struct {
 	Version        string            `yaml:"version"`
 	Vars           map[string]string `yaml:"vars"`
 	Templates      []string          `yaml:"templates"`
+	Paths          RepoPaths         `yaml:"paths"`
 	Env            EnvSpec           `yaml:"env"`
 	BwrapArgs      []string          `yaml:"bwrap_args"`
 	Mounts         []Mount           `yaml:"mounts"`
@@ -268,10 +276,13 @@ type Repo struct {
 
 // Paths are machine-local base directories (user config only).
 type Paths struct {
-	StorageBase  string `yaml:"storage_base"`
-	TmpBase      string `yaml:"tmp_base"`
-	GoModCache   string `yaml:"go_mod_cache"`
-	GoBuildCache string `yaml:"go_build_cache"`
+	StorageBase  string   `yaml:"storage_base"`
+	TmpBase      string   `yaml:"tmp_base"`
+	GoModCache   string   `yaml:"go_mod_cache"`
+	GoBuildCache string   `yaml:"go_build_cache"`
+	Extra        []string `yaml:"extra"`
+	Prepend      []string `yaml:"prepend"`
+	Append       []string `yaml:"append"`
 }
 
 // RunnerCfg holds delegation settings and local extra allowlists.
@@ -490,6 +501,21 @@ func (r *Repo) validate() error {
 			return fmt.Errorf("repo config: trust_anchors[%d] %q: path escapes repository root", i, anchor)
 		}
 	}
+	for i, p := range r.Paths.Extra {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("repo config: paths.extra[%d]: empty path", i)
+		}
+	}
+	for i, p := range r.Paths.Prepend {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("repo config: paths.prepend[%d]: empty path", i)
+		}
+	}
+	for i, p := range r.Paths.Append {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("repo config: paths.append[%d]: empty path", i)
+		}
+	}
 	if err := r.Env.validate("repo config"); err != nil {
 		return err
 	}
@@ -563,6 +589,21 @@ func (u *User) validate() error {
 	if err := u.Env.validate("user config"); err != nil {
 		return err
 	}
+	for i, p := range u.Paths.Extra {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("user config: paths.extra[%d]: empty path", i)
+		}
+	}
+	for i, p := range u.Paths.Prepend {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("user config: paths.prepend[%d]: empty path", i)
+		}
+	}
+	for i, p := range u.Paths.Append {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("user config: paths.append[%d]: empty path", i)
+		}
+	}
 	for name, hostPath := range u.Secrets {
 		if name == "" {
 			return fmt.Errorf("user config: secrets: entry with empty name")
@@ -585,6 +626,23 @@ func (u *User) validate() error {
 		}
 	}
 	for repoPat, override := range u.Repos {
+		if override.Paths != nil {
+			for i, p := range override.Paths.Extra {
+				if strings.TrimSpace(p) == "" {
+					return fmt.Errorf("user config: repos[%s].paths.extra[%d]: empty path", repoPat, i)
+				}
+			}
+			for i, p := range override.Paths.Prepend {
+				if strings.TrimSpace(p) == "" {
+					return fmt.Errorf("user config: repos[%s].paths.prepend[%d]: empty path", repoPat, i)
+				}
+			}
+			for i, p := range override.Paths.Append {
+				if strings.TrimSpace(p) == "" {
+					return fmt.Errorf("user config: repos[%s].paths.append[%d]: empty path", repoPat, i)
+				}
+			}
+		}
 		if err := override.Env.validate(fmt.Sprintf("user config: repos[%s]", repoPat)); err != nil {
 			return err
 		}
@@ -594,6 +652,7 @@ func (u *User) validate() error {
 			}
 		}
 	}
+
 	for name, src := range u.VarsFromExec {
 		if len(src.Cmd) == 0 {
 			return fmt.Errorf("user config: vars_from_exec[%s]: cmd required", name)

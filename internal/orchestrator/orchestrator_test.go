@@ -1265,3 +1265,128 @@ func TestUnshareStageArgv(t *testing.T) {
 		t.Errorf("argv last element = %q, want %q", argv[len(argv)-1], NetnsStageCommandName)
 	}
 }
+
+func TestBuildPlan_PathsExtra(t *testing.T) {
+	repoDir := t.TempDir()
+	repoCfg := filepath.Join(repoDir, ".keg.yaml")
+	repoYAML := `version: "1"
+vars:
+  custom_bin: .custom/bin
+paths:
+  extra:
+    - node_modules/.bin
+    - ~/my-tools
+    - /opt/fixed-tool
+    - "{{ .Vars.custom_bin }}"
+`
+	if err := os.WriteFile(repoCfg, []byte(repoYAML), 0o600); err != nil {
+		t.Fatalf("write repo config: %v", err)
+	}
+	approveRepo(t, repoDir, []byte(repoYAML))
+
+	userDir := t.TempDir()
+	userCfg := filepath.Join(userDir, "config.yaml")
+	userYAML := `paths:
+  extra:
+    - /opt/user-global
+    - node_modules/.bin
+`
+	if err := os.WriteFile(userCfg, []byte(userYAML), 0o600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	plan, _, err := BuildPlan(repoDir, "", userCfg, OverlayPlain, "", OverlayPlain, "", "test-paths-extra")
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	wantExtra := []string{
+		filepath.Join(repoDir, "node_modules/.bin"),
+		"/home/sandbox/my-tools",
+		"/opt/fixed-tool",
+		filepath.Join(repoDir, ".custom/bin"),
+		"/opt/user-global",
+	}
+
+	if !slices.Equal(plan.PrependPathDirs, wantExtra) {
+		t.Errorf("plan.PrependPathDirs = %v, want %v", plan.PrependPathDirs, wantExtra)
+	}
+
+	args, err := BuildArgs(plan)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+
+	wantPath := strings.Join(wantExtra, ":") + ":" +
+		repoDir + "/.cache/bin:/home/sandbox/.local/bin:/usr/local/bin:/usr/bin:/bin"
+	if !containsPair(args, "--setenv", "PATH") || !slices.Contains(args, wantPath) {
+		t.Errorf("PATH not constructed properly, want containing %q\ngot args:\n%s", wantPath, strings.Join(args, "\n"))
+	}
+}
+
+func TestBuildPlan_PathsPrependAndAppend(t *testing.T) {
+	repoDir := t.TempDir()
+	repoCfg := filepath.Join(repoDir, ".keg.yaml")
+	repoYAML := `version: "1"
+vars:
+  tools_dir: .tools/bin
+paths:
+  prepend:
+    - node_modules/.bin
+    - "{{ .Vars.tools_dir }}"
+  append:
+    - /opt/fallback
+    - ~/repo-fallback
+`
+	if err := os.WriteFile(repoCfg, []byte(repoYAML), 0o600); err != nil {
+		t.Fatalf("write repo config: %v", err)
+	}
+	approveRepo(t, repoDir, []byte(repoYAML))
+
+	userDir := t.TempDir()
+	userCfg := filepath.Join(userDir, "config.yaml")
+	userYAML := `paths:
+  prepend:
+    - /opt/user-prep
+  append:
+    - /opt/user-app
+`
+	if err := os.WriteFile(userCfg, []byte(userYAML), 0o600); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+
+	plan, _, err := BuildPlan(repoDir, "", userCfg, OverlayPlain, "", OverlayPlain, "", "test-paths-prep-app")
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	wantPrepend := []string{
+		filepath.Join(repoDir, "node_modules/.bin"),
+		filepath.Join(repoDir, ".tools/bin"),
+		"/opt/user-prep",
+	}
+	if !slices.Equal(plan.PrependPathDirs, wantPrepend) {
+		t.Errorf("plan.PrependPathDirs = %v, want %v", plan.PrependPathDirs, wantPrepend)
+	}
+
+	wantAppend := []string{
+		"/opt/fallback",
+		"/home/sandbox/repo-fallback",
+		"/opt/user-app",
+	}
+	if !slices.Equal(plan.AppendPathDirs, wantAppend) {
+		t.Errorf("plan.AppendPathDirs = %v, want %v", plan.AppendPathDirs, wantAppend)
+	}
+
+	args, err := BuildArgs(plan)
+	if err != nil {
+		t.Fatalf("BuildArgs: %v", err)
+	}
+
+	wantPath := strings.Join(wantPrepend, ":") + ":" +
+		repoDir + "/.cache/bin:/home/sandbox/.local/bin:/usr/local/bin:/usr/bin:/bin:" +
+		strings.Join(wantAppend, ":")
+	if !containsPair(args, "--setenv", "PATH") || !slices.Contains(args, wantPath) {
+		t.Errorf("PATH not constructed properly, want containing %q\ngot args:\n%s", wantPath, strings.Join(args, "\n"))
+	}
+}

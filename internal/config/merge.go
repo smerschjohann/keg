@@ -88,6 +88,9 @@ func mergePaths(base Paths, over *Paths) Paths {
 	if over.GoBuildCache != "" {
 		out.GoBuildCache = over.GoBuildCache
 	}
+	out.Extra = union(base.Extra, over.Extra)
+	out.Prepend = union(base.Prepend, over.Prepend)
+	out.Append = union(base.Append, over.Append)
 	return out
 }
 

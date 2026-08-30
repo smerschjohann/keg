@@ -876,3 +876,213 @@ security:
 		t.Errorf("error %q must mention unknown field security/seccomp", err)
 	}
 }
+
+func TestParseRepo_PathsExtra(t *testing.T) {
+	yamlText := `
+version: "1"
+paths:
+  extra:
+    - node_modules/.bin
+    - vendor/bin
+    - /opt/custom/bin
+`
+	repo, err := ParseRepo([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseRepo() error = %v", err)
+	}
+	if len(repo.Paths.Extra) != 3 {
+		t.Fatalf("repo.Paths.Extra length = %d, want 3", len(repo.Paths.Extra))
+	}
+	want := []string{"node_modules/.bin", "vendor/bin", "/opt/custom/bin"}
+	for i, w := range want {
+		if repo.Paths.Extra[i] != w {
+			t.Errorf("repo.Paths.Extra[%d] = %q, want %q", i, repo.Paths.Extra[i], w)
+		}
+	}
+}
+
+func TestParseRepo_PathsExtra_RejectsEmpty(t *testing.T) {
+	yamlText := `
+version: "1"
+paths:
+  extra:
+    - "  "
+`
+	_, err := ParseRepo([]byte(yamlText))
+	if err == nil {
+		t.Fatal("ParseRepo() with empty paths.extra entry must fail")
+	}
+	if !strings.Contains(err.Error(), "paths.extra") {
+		t.Errorf("error %q must mention paths.extra", err)
+	}
+}
+
+func TestParseRepo_PathsRejectsHostFields(t *testing.T) {
+	yamlText := `
+version: "1"
+paths:
+  storage_base: /var/lib/containers/storage
+`
+	_, err := ParseRepo([]byte(yamlText))
+	if err == nil {
+		t.Fatal("repo config with paths.storage_base must be rejected")
+	}
+	if !strings.Contains(err.Error(), "storage_base") {
+		t.Errorf("error %q must mention storage_base", err)
+	}
+}
+
+func TestParseUser_PathsExtra(t *testing.T) {
+	yamlText := `
+paths:
+  storage_base: /custom/storage
+  extra:
+    - /opt/tools/bin
+    - ~/.local/bin
+repos:
+  "~/work/*":
+    paths:
+      extra:
+        - /opt/work/bin
+`
+	user, err := ParseUser([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseUser() error = %v", err)
+	}
+	if len(user.Paths.Extra) != 2 {
+		t.Fatalf("user.Paths.Extra length = %d, want 2", len(user.Paths.Extra))
+	}
+	if user.Paths.Extra[0] != "/opt/tools/bin" || user.Paths.Extra[1] != "~/.local/bin" {
+		t.Errorf("user.Paths.Extra = %v", user.Paths.Extra)
+	}
+	repoOverride, ok := user.Repos["~/work/*"]
+	if !ok || repoOverride.Paths == nil {
+		t.Fatalf("repo override ~/work/* paths missing")
+	}
+	if len(repoOverride.Paths.Extra) != 1 || repoOverride.Paths.Extra[0] != "/opt/work/bin" {
+		t.Errorf("repo override paths.extra = %v", repoOverride.Paths.Extra)
+	}
+}
+
+func TestParseUser_PathsExtra_RejectsEmpty(t *testing.T) {
+	yamlText := `
+paths:
+  extra:
+    - ""
+`
+	_, err := ParseUser([]byte(yamlText))
+	if err == nil {
+		t.Fatal("ParseUser() with empty paths.extra entry must fail")
+	}
+	if !strings.Contains(err.Error(), "paths.extra") {
+		t.Errorf("error %q must mention paths.extra", err)
+	}
+}
+
+func TestParseRepo_PathsPrependAndAppend(t *testing.T) {
+	yamlText := `
+version: "1"
+paths:
+  prepend:
+    - node_modules/.bin
+    - vendor/bin
+  append:
+    - /opt/fallback/bin
+`
+	repo, err := ParseRepo([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseRepo() error = %v", err)
+	}
+	if len(repo.Paths.Prepend) != 2 {
+		t.Fatalf("repo.Paths.Prepend length = %d, want 2", len(repo.Paths.Prepend))
+	}
+	if repo.Paths.Prepend[0] != "node_modules/.bin" || repo.Paths.Prepend[1] != "vendor/bin" {
+		t.Errorf("repo.Paths.Prepend = %v", repo.Paths.Prepend)
+	}
+	if len(repo.Paths.Append) != 1 || repo.Paths.Append[0] != "/opt/fallback/bin" {
+		t.Errorf("repo.Paths.Append = %v", repo.Paths.Append)
+	}
+}
+
+func TestParseRepo_PathsPrependAppend_RejectsEmpty(t *testing.T) {
+	t.Run("prepend empty", func(t *testing.T) {
+		yamlText := `version: "1"
+paths:
+  prepend: [""]
+`
+		_, err := ParseRepo([]byte(yamlText))
+		if err == nil || !strings.Contains(err.Error(), "paths.prepend") {
+			t.Errorf("expected paths.prepend error, got %v", err)
+		}
+	})
+
+	t.Run("append empty", func(t *testing.T) {
+		yamlText := `version: "1"
+paths:
+  append: ["   "]
+`
+		_, err := ParseRepo([]byte(yamlText))
+		if err == nil || !strings.Contains(err.Error(), "paths.append") {
+			t.Errorf("expected paths.append error, got %v", err)
+		}
+	})
+}
+
+func TestParseUser_PathsPrependAndAppend(t *testing.T) {
+	yamlText := `
+paths:
+  prepend:
+    - /opt/user-prepend
+  append:
+    - /opt/user-append
+repos:
+  "~/work/*":
+    paths:
+      prepend:
+        - /opt/work-prepend
+      append:
+        - /opt/work-append
+`
+	user, err := ParseUser([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseUser() error = %v", err)
+	}
+	if len(user.Paths.Prepend) != 1 || user.Paths.Prepend[0] != "/opt/user-prepend" {
+		t.Errorf("user.Paths.Prepend = %v", user.Paths.Prepend)
+	}
+	if len(user.Paths.Append) != 1 || user.Paths.Append[0] != "/opt/user-append" {
+		t.Errorf("user.Paths.Append = %v", user.Paths.Append)
+	}
+	repoOverride, ok := user.Repos["~/work/*"]
+	if !ok || repoOverride.Paths == nil {
+		t.Fatalf("repo override ~/work/* paths missing")
+	}
+	if len(repoOverride.Paths.Prepend) != 1 || repoOverride.Paths.Prepend[0] != "/opt/work-prepend" {
+		t.Errorf("repo override paths.prepend = %v", repoOverride.Paths.Prepend)
+	}
+	if len(repoOverride.Paths.Append) != 1 || repoOverride.Paths.Append[0] != "/opt/work-append" {
+		t.Errorf("repo override paths.append = %v", repoOverride.Paths.Append)
+	}
+}
+
+func TestParseUser_PathsPrependAppend_RejectsEmpty(t *testing.T) {
+	t.Run("prepend empty", func(t *testing.T) {
+		yamlText := `paths:
+  prepend: [""]
+`
+		_, err := ParseUser([]byte(yamlText))
+		if err == nil || !strings.Contains(err.Error(), "paths.prepend") {
+			t.Errorf("expected paths.prepend error, got %v", err)
+		}
+	})
+
+	t.Run("append empty", func(t *testing.T) {
+		yamlText := `paths:
+  append: ["  "]
+`
+		_, err := ParseUser([]byte(yamlText))
+		if err == nil || !strings.Contains(err.Error(), "paths.append") {
+			t.Errorf("expected paths.append error, got %v", err)
+		}
+	})
+}

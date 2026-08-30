@@ -66,6 +66,69 @@ runner:
 	}
 }
 
+func TestMergeUsers_PathsExtraUnion(t *testing.T) {
+	base := userFromYAML(t, `
+paths:
+  extra:
+    - /opt/global/bin
+    - /opt/shared/bin
+`)
+	override := userFromYAML(t, `
+paths:
+  extra:
+    - /opt/shared/bin
+    - /opt/override/bin
+`)
+	got := MergeUsers(base, override)
+	wantExtra := []string{"/opt/global/bin", "/opt/shared/bin", "/opt/override/bin"}
+	if len(got.Paths.Extra) != len(wantExtra) {
+		t.Fatalf("paths.extra = %v, want %v", got.Paths.Extra, wantExtra)
+	}
+	for i, w := range wantExtra {
+		if got.Paths.Extra[i] != w {
+			t.Errorf("paths.extra[%d] = %q, want %q", i, got.Paths.Extra[i], w)
+		}
+	}
+}
+
+func TestMergeUsers_PathsPrependAndAppendUnion(t *testing.T) {
+	base := userFromYAML(t, `
+paths:
+  prepend:
+    - /opt/global-prep/bin
+    - /opt/shared-prep/bin
+  append:
+    - /opt/global-app/bin
+`)
+	override := userFromYAML(t, `
+paths:
+  prepend:
+    - /opt/shared-prep/bin
+    - /opt/override-prep/bin
+  append:
+    - /opt/override-app/bin
+`)
+	got := MergeUsers(base, override)
+	wantPrepend := []string{"/opt/global-prep/bin", "/opt/shared-prep/bin", "/opt/override-prep/bin"}
+	if len(got.Paths.Prepend) != len(wantPrepend) {
+		t.Fatalf("paths.prepend = %v, want %v", got.Paths.Prepend, wantPrepend)
+	}
+	for i, w := range wantPrepend {
+		if got.Paths.Prepend[i] != w {
+			t.Errorf("paths.prepend[%d] = %q, want %q", i, got.Paths.Prepend[i], w)
+		}
+	}
+	wantAppend := []string{"/opt/global-app/bin", "/opt/override-app/bin"}
+	if len(got.Paths.Append) != len(wantAppend) {
+		t.Fatalf("paths.append = %v, want %v", got.Paths.Append, wantAppend)
+	}
+	for i, w := range wantAppend {
+		if got.Paths.Append[i] != w {
+			t.Errorf("paths.append[%d] = %q, want %q", i, got.Paths.Append[i], w)
+		}
+	}
+}
+
 func TestMergeUsers_MapsKeywise(t *testing.T) {
 	base := userFromYAML(t, `
 vars:

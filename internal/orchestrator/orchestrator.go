@@ -175,6 +175,11 @@ type Plan struct {
 	// ExtraPathDirs are prepended to the sandbox PATH (e.g. GOROOT/bin for
 	// toolchains bound outside /usr).
 	ExtraPathDirs []string
+	// PrependPathDirs are prepended before standard sandbox directories.
+	PrependPathDirs []string
+	// AppendPathDirs are appended after standard sandbox directories.
+	AppendPathDirs []string
+
 	// InstanceName identifies a named sandbox instance.
 	InstanceName string
 	// AuditFile is the path to the optional audit log file (log.audit_file in user config).
@@ -400,8 +405,14 @@ func BuildArgs(p Plan) ([]string, error) {
 	// local tools, then the sandbox home and the system (all absolute so
 	// they resolve inside).
 	path := p.RepoRoot + "/.cache/bin:" + p.SandboxHome + "/.local/bin:/usr/local/bin:/usr/bin:/bin"
+	for _, dir := range p.AppendPathDirs {
+		path += ":" + dir
+	}
 	if p.SelfExe != "" {
 		path += ":/.keg" // `keg delegate` for delegation channel C
+	}
+	for _, dir := range slices.Backward(p.PrependPathDirs) {
+		path = dir + ":" + path
 	}
 	for _, dir := range slices.Backward(p.ExtraPathDirs) {
 		path = dir + ":" + path

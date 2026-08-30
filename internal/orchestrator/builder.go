@@ -354,7 +354,42 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		}
 		if tc.GoRootNeedsBind() {
 			plan.Mounts = append(plan.Mounts, config.Mount{Src: tc.GoRoot, Dest: tc.GoRoot, Mode: config.MountRO})
-			plan.ExtraPathDirs = []string{tc.GoRoot + "/bin"}
+			binDir := tc.GoRoot + "/bin"
+			if !slices.Contains(plan.ExtraPathDirs, binDir) {
+				plan.ExtraPathDirs = append([]string{binDir}, plan.ExtraPathDirs...)
+			}
+		}
+	}
+
+	// Prepend paths (prepend / extra)
+	for _, raw := range append(slices.Clone(repo.Paths.Prepend), repo.Paths.Extra...) {
+		if p := resolveExtraPath(raw, root, plan.SandboxHome); p != "" {
+			if !slices.Contains(plan.PrependPathDirs, p) {
+				plan.PrependPathDirs = append(plan.PrependPathDirs, p)
+			}
+		}
+	}
+	for _, raw := range append(slices.Clone(effective.Paths.Prepend), effective.Paths.Extra...) {
+		if p := resolveExtraPath(raw, root, plan.SandboxHome); p != "" {
+			if !slices.Contains(plan.PrependPathDirs, p) {
+				plan.PrependPathDirs = append(plan.PrependPathDirs, p)
+			}
+		}
+	}
+
+	// Append paths
+	for _, raw := range repo.Paths.Append {
+		if p := resolveExtraPath(raw, root, plan.SandboxHome); p != "" {
+			if !slices.Contains(plan.AppendPathDirs, p) {
+				plan.AppendPathDirs = append(plan.AppendPathDirs, p)
+			}
+		}
+	}
+	for _, raw := range effective.Paths.Append {
+		if p := resolveExtraPath(raw, root, plan.SandboxHome); p != "" {
+			if !slices.Contains(plan.AppendPathDirs, p) {
+				plan.AppendPathDirs = append(plan.AppendPathDirs, p)
+			}
 		}
 	}
 
@@ -669,7 +704,42 @@ func resolveTemplates(r *config.Repo, tctx template.Context) error {
 		}
 		r.Env.Set[k] = rendered
 	}
+	for i := range r.Paths.Extra {
+		rendered, err := template.Apply(r.Paths.Extra[i], tctx)
+		if err != nil {
+			return fmt.Errorf("paths.extra[%d]: %w", i, err)
+		}
+		r.Paths.Extra[i] = rendered
+	}
+	for i := range r.Paths.Prepend {
+		rendered, err := template.Apply(r.Paths.Prepend[i], tctx)
+		if err != nil {
+			return fmt.Errorf("paths.prepend[%d]: %w", i, err)
+		}
+		r.Paths.Prepend[i] = rendered
+	}
+	for i := range r.Paths.Append {
+		rendered, err := template.Apply(r.Paths.Append[i], tctx)
+		if err != nil {
+			return fmt.Errorf("paths.append[%d]: %w", i, err)
+		}
+		r.Paths.Append[i] = rendered
+	}
 	return nil
+}
+
+func resolveExtraPath(pathStr, repoRoot, sandboxHome string) string {
+	pathStr = strings.TrimSpace(pathStr)
+	if pathStr == "" {
+		return ""
+	}
+	if pathStr == "~" || strings.HasPrefix(pathStr, "~/") {
+		return sandboxHome + strings.TrimPrefix(pathStr, "~")
+	}
+	if filepath.IsAbs(pathStr) {
+		return filepath.Clean(pathStr)
+	}
+	return filepath.Clean(filepath.Join(repoRoot, pathStr))
 }
 
 // AddPortsToPlan resolves the given port specifications and attaches them
