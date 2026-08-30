@@ -42,6 +42,8 @@ func mergeNetwork(base, over Network) Network {
 	}
 	out.DNS.Hosts = mergeStringMaps(base.DNS.Hosts, over.DNS.Hosts)
 	out.SNIDomains = union(base.SNIDomains, over.SNIDomains)
+	out.AllowNetworks = union(base.AllowNetworks, over.AllowNetworks)
+	out.BlockNetworks = union(base.BlockNetworks, over.BlockNetworks)
 	out.TCPEndpoints = append(slices.Clone(base.TCPEndpoints), over.TCPEndpoints...)
 	return out
 }

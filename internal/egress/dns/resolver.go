@@ -11,6 +11,7 @@ import (
 	"time"
 
 	miek "github.com/miekg/dns"
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 )
 
 // DefaultTimeout bounds a single upstream exchange.
@@ -26,6 +27,8 @@ type Resolver struct {
 	Hosts map[string]string
 	// Whitelist of exact domains and "*.suffix" patterns (proxy.Match).
 	Whitelist []string
+	// NetworkPolicy evaluates resolved IP destinations against CIDR rules.
+	NetworkPolicy *proxy.NetworkPolicy
 	// Upstream resolver address ("host:port"); required for forwarding.
 	Upstream string
 	// Timeout bounds the upstream exchange (default 3s).
@@ -50,6 +53,12 @@ func (r *Resolver) HandleQuery(query []byte) []byte {
 	name := strings.TrimSuffix(strings.ToLower(q.Question[0].Name), ".")
 
 	if ip, ok := lookupHosts(r.Hosts, name); ok {
+		if r.NetworkPolicy != nil && !r.NetworkPolicy.Evaluate(ip) {
+			if r.Audit != nil {
+				r.Audit(false, name)
+			}
+			return nxdomain(q, query)
+		}
 		if r.Audit != nil {
 			r.Audit(true, name)
 		}
@@ -77,20 +86,34 @@ func (r *Resolver) HandleQuery(query []byte) []byte {
 	if err != nil {
 		return servfail(q, query)
 	}
-	if r.OnA != nil {
-		parsed := new(miek.Msg)
-		if err := parsed.Unpack(resp); err == nil {
-			var ips []net.IP
-			for _, rr := range parsed.Answer {
-				if a, ok := rr.(*miek.A); ok {
-					ips = append(ips, a.A)
+
+	parsed := new(miek.Msg)
+	if err := parsed.Unpack(resp); err == nil {
+		var filteredAnswers []miek.RR
+		var allowedIPs []net.IP
+		for _, rr := range parsed.Answer {
+			if a, ok := rr.(*miek.A); ok {
+				if r.NetworkPolicy != nil && !r.NetworkPolicy.Evaluate(a.A) {
+					continue // filter out blocked IP
 				}
+				allowedIPs = append(allowedIPs, a.A)
 			}
-			if len(ips) > 0 {
-				r.OnA(name, ips)
-			}
+			filteredAnswers = append(filteredAnswers, rr)
 		}
+
+		if len(parsed.Answer) > 0 && len(filteredAnswers) == 0 {
+			// All answers were blocked by NetworkPolicy
+			return nxdomain(q, query)
+		}
+
+		if r.OnA != nil && len(allowedIPs) > 0 {
+			r.OnA(name, allowedIPs)
+		}
+
+		parsed.Answer = filteredAnswers
+		return mustPack(parsed, query)
 	}
+
 	return resp
 }
 
@@ -165,6 +188,8 @@ func matchZone(name string, patterns []string) bool {
 		switch {
 		case p == "":
 			continue
+		case p == "*":
+			return true
 		case strings.HasPrefix(p, "*."):
 			suffix := strings.TrimPrefix(p, "*.")
 			if name == suffix || strings.HasSuffix(name, "."+suffix) {

@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/portsfw"
 	"github.com/smerschjohann/keg/internal/runner"
 	"github.com/smerschjohann/keg/internal/secrets"
@@ -123,6 +124,8 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		mode = effective.Network.Mode
 	}
 	sniDomains := config.UnionStrings(repo.Network.SNIDomains, effective.Network.SNIDomains)
+	allowNetworks := config.UnionStrings(repo.Network.AllowNetworks, effective.Network.AllowNetworks)
+	blockNetworks := config.UnionStrings(repo.Network.BlockNetworks, effective.Network.BlockNetworks)
 	tcpEndpoints := append(slices.Clone(repo.Network.TCPEndpoints), effective.Network.TCPEndpoints...)
 
 	// Env merge chain: User-global -> Repo -> repos[match] override -> CLI
@@ -158,9 +161,11 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 		BwrapArgs:     repo.BwrapArgs,
 		AllowWeakBwrap: effective.Security.AllowWeakBwrap != nil &&
 			*effective.Security.AllowWeakBwrap,
-		Overlay:      overlay,
-		SNIDomains:   sniDomains,
-		TCPEndpoints: tcpEndpoints,
+		Overlay:       overlay,
+		SNIDomains:    sniDomains,
+		AllowNetworks: allowNetworks,
+		BlockNetworks: blockNetworks,
+		TCPEndpoints:  tcpEndpoints,
 		// "both" enables the transparent SNI relay WITHOUT disabling the
 		// explicit proxy path — both routes share the host-side policy.
 		Transparent: mode == "transparent" || mode == "both",
@@ -515,9 +520,15 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 		aw = plan.AuditWriter
 	}
 
+	netPolicy, err := proxy.NewNetworkPolicy(plan.AllowNetworks, plan.BlockNetworks, plan.AllowAllNetwork)
+	if err != nil {
+		return fmt.Errorf("create network policy: %w", err)
+	}
+
 	// DNS channel
 	if plan.EgressDNS != nil {
 		dnsCfg := *plan.EgressDNS
+		dnsCfg.NetworkPolicy = netPolicy
 		if aw != nil {
 			dnsCfg.Audit = aw
 		}
@@ -534,6 +545,7 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 		}
 		err := sb.StartEgressProxy(EgressProxyConfig{
 			SNIDomains:    plan.SNIDomains,
+			NetworkPolicy: netPolicy,
 			UpstreamProxy: plan.UpstreamProxy,
 			Audit:         proxyAudit,
 		})
@@ -776,5 +788,61 @@ func AddPortsToPlan(plan *Plan, specs []config.PortSpec) error {
 		plan.EnvSet[k] = v
 	}
 	plan.EnvSet[EnvPortsForward] = portsfw.FormatAllowed(plan.Ports)
+	return nil
+}
+
+// AddSNIDomainsToPlan adds extra SNI / domain whitelist entries to an existing
+// Plan, updating loopback proxy environment variables and configuring egress DNS
+// resolution files if not previously initialized.
+func AddSNIDomainsToPlan(plan *Plan, domains []string) error {
+	if len(domains) == 0 {
+		return nil
+	}
+	plan.SNIDomains = config.UnionStrings(plan.SNIDomains, domains)
+	if plan.EnvSet == nil {
+		plan.EnvSet = make(map[string]string)
+	}
+	if !plan.Transparent {
+		for k, v := range ProxyEnv(plan.SNIDomains) {
+			plan.EnvSet[k] = v
+		}
+	}
+	if plan.EgressDNS != nil {
+		plan.EgressDNS.Whitelist = config.UnionStrings(plan.EgressDNS.Whitelist, domains)
+	} else if len(plan.SNIDomains) > 0 {
+		rcPath := filepath.Join(plan.TmpDir, "resolv.conf")
+		const resolvConf = "nameserver 127.0.0.1\noptions timeout:1 retries:1\n"
+		if err := os.WriteFile(rcPath, []byte(resolvConf), 0o600); err != nil { // #nosec G703 -- keg-created dir
+			return fmt.Errorf("write resolv.conf: %w", err)
+		}
+		plan.ResolvConf = rcPath
+		upstream := FirstHostNameserver()
+		whitelist := append([]string{}, plan.SNIDomains...)
+		for _, ep := range plan.TCPEndpoints {
+			whitelist = append(whitelist, strings.ToLower(ep.Host))
+		}
+		plan.EgressDNS = &DNSConfig{
+			Hosts:     map[string]string{},
+			Whitelist: whitelist,
+			Upstream:  upstream,
+		}
+		hostsPath := filepath.Join(plan.TmpDir, "hosts")
+		content := BuildHostsFile(nil)
+		if err := os.WriteFile(hostsPath, []byte(content), 0o600); err != nil { // #nosec G703 -- keg-created dir
+			return fmt.Errorf("write hosts file: %w", err)
+		}
+		plan.HostsFile = hostsPath
+	}
+	return nil
+}
+
+// AddNetworkCIDRsToPlan adds allow and block CIDR rules to the plan after
+// validating their syntax.
+func AddNetworkCIDRsToPlan(plan *Plan, allowCIDRs, blockCIDRs []string) error {
+	if _, err := proxy.NewNetworkPolicy(allowCIDRs, blockCIDRs, false); err != nil {
+		return err
+	}
+	plan.AllowNetworks = config.UnionStrings(plan.AllowNetworks, allowCIDRs)
+	plan.BlockNetworks = config.UnionStrings(plan.BlockNetworks, blockCIDRs)
 	return nil
 }

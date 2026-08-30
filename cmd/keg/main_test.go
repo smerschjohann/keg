@@ -132,6 +132,10 @@ func TestCLI_RunFlagsDeclared(t *testing.T) {
 		{name: "env flag with -e alias", flag: "env", aliases: []string{"e"}},
 		{name: "var flag with -V alias", flag: "var", aliases: []string{"V"}},
 		{name: "name flag with -n alias", flag: "name", aliases: []string{"n"}},
+		{name: "allow-sni flag with --sni alias", flag: "allow-sni", aliases: []string{"sni"}},
+		{name: "allow-network flag with --allow-net alias", flag: "allow-network", aliases: []string{"allow-net", "allow-cidr"}},
+		{name: "block-network flag with --block-net alias", flag: "block-network", aliases: []string{"block-net", "block-cidr"}},
+		{name: "allow-all-network flag", flag: "allow-all-network"},
 		{name: "ephemeral flag", flag: "ephemeral"},
 	}
 	cmd := NewCommand()

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/portsfw"
 	"github.com/smerschjohann/keg/internal/template"
 )
@@ -138,6 +139,12 @@ type Plan struct {
 	// SNIDomains carries the repo's network.sni_domains (name-based policy
 	// for CONNECT/SNI traffic); empty disables that policy path.
 	SNIDomains []string
+	// AllowNetworks carries explicitly allowed CIDRs or IPs.
+	AllowNetworks []string
+	// BlockNetworks carries explicitly blocked CIDRs or IPs.
+	BlockNetworks []string
+	// AllowAllNetwork overrides CIDR restrictions, allowing any destination IP.
+	AllowAllNetwork bool
 	// TCPEndpoints carries network.tcp_endpoints for IP/port-based raw-TCP
 	// policy via DNS correlation.
 	TCPEndpoints []config.TCPEndpoint
@@ -231,6 +238,8 @@ type DNSConfig struct {
 	Hosts map[string]string
 	// Whitelist gates which names may be forwarded upstream.
 	Whitelist []string
+	// NetworkPolicy evaluates resolved IP destinations against CIDR rules.
+	NetworkPolicy *proxy.NetworkPolicy
 	// Upstream resolver address ("host:port").
 	Upstream string
 	// Audit receives "DNS <ERLAUBT|BLOCKIERT> <name>" decision lines; nil = disabled.

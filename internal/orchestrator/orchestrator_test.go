@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/trust"
 )
 
@@ -1388,5 +1389,71 @@ paths:
 		strings.Join(wantAppend, ":")
 	if !containsPair(args, "--setenv", "PATH") || !slices.Contains(args, wantPath) {
 		t.Errorf("PATH not constructed properly, want containing %q\ngot args:\n%s", wantPath, strings.Join(args, "\n"))
+	}
+}
+
+func TestAddSNIDomainsToPlan(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	plan := Plan{
+		TmpDir:   tmpDir,
+		RepoRoot: tmpDir,
+		EnvSet:   map[string]string{},
+	}
+
+	// 1. Add SNIs to previously empty plan
+	if err := AddSNIDomainsToPlan(&plan, []string{"proxy.golang.org", "*.example.com"}); err != nil {
+		t.Fatalf("AddSNIDomainsToPlan: %v", err)
+	}
+
+	if len(plan.SNIDomains) != 2 || plan.SNIDomains[0] != "proxy.golang.org" || plan.SNIDomains[1] != "*.example.com" {
+		t.Errorf("plan.SNIDomains = %v, want 2 domains", plan.SNIDomains)
+	}
+	if plan.EnvSet[EnvProxyBridge] != proxy.DefaultBridgeAddr {
+		t.Errorf("proxy marker not set in EnvSet: %v", plan.EnvSet)
+	}
+	if plan.ResolvConf == "" || plan.HostsFile == "" || plan.EgressDNS == nil {
+		t.Fatalf("DNS/resolv.conf/hosts was not initialized on plan")
+	}
+	if len(plan.EgressDNS.Whitelist) != 2 {
+		t.Errorf("EgressDNS.Whitelist = %v, want 2 entries", plan.EgressDNS.Whitelist)
+	}
+
+	// 2. Add extra SNIs to existing plan (unions)
+	if err := AddSNIDomainsToPlan(&plan, []string{"*.example.com", "api.github.com"}); err != nil {
+		t.Fatalf("AddSNIDomainsToPlan union: %v", err)
+	}
+	if len(plan.SNIDomains) != 3 {
+		t.Errorf("plan.SNIDomains after union = %v, want 3 entries", plan.SNIDomains)
+	}
+	if len(plan.EgressDNS.Whitelist) != 3 {
+		t.Errorf("plan.EgressDNS.Whitelist after union = %v, want 3 entries", plan.EgressDNS.Whitelist)
+	}
+}
+
+func TestAddNetworkCIDRsToPlan(t *testing.T) {
+	t.Parallel()
+	plan := Plan{
+		AllowNetworks: []string{"192.168.1.0/24"},
+		BlockNetworks: []string{"10.0.0.0/8"},
+	}
+
+	// 1. Valid CIDRs added
+	if err := AddNetworkCIDRsToPlan(&plan, []string{"10.1.2.0/24"}, []string{"169.254.169.254/32"}); err != nil {
+		t.Fatalf("AddNetworkCIDRsToPlan: %v", err)
+	}
+	if len(plan.AllowNetworks) != 2 || plan.AllowNetworks[1] != "10.1.2.0/24" {
+		t.Errorf("plan.AllowNetworks = %v", plan.AllowNetworks)
+	}
+	if len(plan.BlockNetworks) != 2 || plan.BlockNetworks[1] != "169.254.169.254/32" {
+		t.Errorf("plan.BlockNetworks = %v", plan.BlockNetworks)
+	}
+
+	// 2. Invalid CIDR errors
+	if err := AddNetworkCIDRsToPlan(&plan, []string{"invalid-cidr"}, nil); err == nil {
+		t.Errorf("expected error for invalid allow CIDR, got nil")
+	}
+	if err := AddNetworkCIDRsToPlan(&plan, nil, []string{"invalid-cidr"}); err == nil {
+		t.Errorf("expected error for invalid block CIDR, got nil")
 	}
 }

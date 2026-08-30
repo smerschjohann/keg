@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/smerschjohann/keg/internal/config"
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 	"github.com/smerschjohann/keg/internal/orchestrator"
 	"github.com/smerschjohann/keg/internal/portsfw"
 )
@@ -105,6 +106,49 @@ func parseForwardHostFlags(entries []string) ([]config.ForwardHostSpec, error) {
 	return specs, nil
 }
 
+func parseSNIFlags(entries []string) ([]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	var domains []string
+	for _, entry := range entries {
+		if entry == "" {
+			return nil, fmt.Errorf("empty allow-sni flag entry")
+		}
+		for _, part := range strings.Split(entry, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				return nil, fmt.Errorf("empty domain in allow-sni flag %q", entry)
+			}
+			domains = append(domains, part)
+		}
+	}
+	return domains, nil
+}
+
+func parseNetworkCIDRFlags(entries []string) ([]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	var cidrs []string
+	for _, entry := range entries {
+		if entry == "" {
+			return nil, fmt.Errorf("empty network flag entry")
+		}
+		for _, part := range strings.Split(entry, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				return nil, fmt.Errorf("empty CIDR in network flag %q", entry)
+			}
+			if _, err := proxy.NewNetworkPolicy([]string{part}, nil, false); err != nil {
+				return nil, fmt.Errorf("invalid network CIDR or IP %q: %w", part, err)
+			}
+			cidrs = append(cidrs, part)
+		}
+	}
+	return cidrs, nil
+}
+
 var (
 	upstreamProxyFromEnv = orchestrator.UpstreamProxyFromEnv
 	firstHostNameserver  = orchestrator.FirstHostNameserver
@@ -173,6 +217,21 @@ func runAction(ctx context.Context, c *cliCommand) error {
 		return err
 	}
 
+	cliSNIs, err := parseSNIFlags(c.StringSlice("allow-sni"))
+	if err != nil {
+		return err
+	}
+
+	cliAllowNets, err := parseNetworkCIDRFlags(c.StringSlice("allow-network"))
+	if err != nil {
+		return err
+	}
+
+	cliBlockNets, err := parseNetworkCIDRFlags(c.StringSlice("block-network"))
+	if err != nil {
+		return err
+	}
+
 	plan, userCfg, err := orchestrator.BuildPlan(repoDir, c.String("config"), c.String("user-config"), overlay, diskName, cacheOverlay, isolatedCacheName, instanceName, cliVars)
 	if err != nil {
 		return err
@@ -184,6 +243,21 @@ func runAction(ctx context.Context, c *cliCommand) error {
 	plan.EnvInherit = config.UnionStrings(plan.EnvInherit, cliInherit)
 	if c.Bool("inherit-all") {
 		plan.EnvInheritAll = true
+	}
+
+	if c.Bool("allow-all-network") {
+		plan.AllowAllNetwork = true
+	}
+	if len(cliAllowNets) > 0 || len(cliBlockNets) > 0 {
+		if err := orchestrator.AddNetworkCIDRsToPlan(&plan, cliAllowNets, cliBlockNets); err != nil {
+			return err
+		}
+	}
+
+	if len(cliSNIs) > 0 {
+		if err := orchestrator.AddSNIDomainsToPlan(&plan, cliSNIs); err != nil {
+			return err
+		}
 	}
 
 	if len(cliPorts) > 0 {

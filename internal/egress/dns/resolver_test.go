@@ -7,6 +7,7 @@ import (
 	"time"
 
 	miek "github.com/miekg/dns"
+	"github.com/smerschjohann/keg/internal/egress/proxy"
 )
 
 // mustQuery packs a wire-format A query for name.
@@ -135,6 +136,54 @@ func TestResolver_ResponseIDMatchesQuery(t *testing.T) {
 	rid := uint16(resp[0])<<8 | uint16(resp[1])
 	if qid != rid {
 		t.Fatalf("response id %d != query id %d", rid, qid)
+	}
+}
+
+func TestResolver_WhitelistStarForwardsAll(t *testing.T) {
+	t.Parallel()
+	upstream := fakeUpstream(t, map[string]string{
+		"example.com":       "93.184.216.34",
+		"a.b.c.example.org": "1.2.3.4",
+	})
+	r := Resolver{Whitelist: []string{"*"}, Upstream: upstream}
+
+	for _, name := range []string{"example.com", "a.b.c.example.org"} {
+		resp := r.HandleQuery(mustQuery(t, name))
+		rcode, answers, _ := answerFields(t, resp)
+		if rcode != miek.RcodeSuccess || len(answers) == 0 {
+			t.Fatalf("query for %s failed with * whitelist: rcode=%d answers=%v", name, rcode, answers)
+		}
+	}
+}
+
+func TestResolver_NetworkPolicyFiltersAnswers(t *testing.T) {
+	t.Parallel()
+	upstream := fakeUpstream(t, map[string]string{
+		"good.example.com": "93.184.216.34",
+		"bad.example.com":  "10.0.0.1",
+	})
+	policy, err := proxy.NewNetworkPolicy(nil, []string{"10.0.0.0/8"}, false)
+	if err != nil {
+		t.Fatalf("NewNetworkPolicy: %v", err)
+	}
+	r := Resolver{
+		Whitelist:     []string{"*"},
+		Upstream:      upstream,
+		NetworkPolicy: policy,
+	}
+
+	// 1. Query resolving to allowed IP passes:
+	resp := r.HandleQuery(mustQuery(t, "good.example.com"))
+	rcode, answers, _ := answerFields(t, resp)
+	if rcode != miek.RcodeSuccess || len(answers) != 1 || answers[0] != "93.184.216.34" {
+		t.Fatalf("good query unexpected result: rcode=%d answers=%v", rcode, answers)
+	}
+
+	// 2. Query resolving to blocked IP is filtered and returns NXDOMAIN:
+	resp = r.HandleQuery(mustQuery(t, "bad.example.com"))
+	rcode, answers, _ = answerFields(t, resp)
+	if rcode != miek.RcodeNameError || len(answers) != 0 {
+		t.Fatalf("bad query was not blocked: rcode=%d answers=%v", rcode, answers)
 	}
 }
 

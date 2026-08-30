@@ -244,7 +244,21 @@
           "items": {
             "type": "string"
           },
-          "description": "Whitelisted domain names for HTTP/HTTPS proxy and transparent SNI filter (exact or wildcard like *.example.com)."
+          "description": "Whitelisted domain names for HTTP/HTTPS proxy and transparent SNI filter (exact or wildcard like *.example.com or *)."
+        },
+        "allow_networks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Allowed destination CIDR ranges or IPs (e.g. '10.1.2.0/24', '192.168.1.1')."
+        },
+        "block_networks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Blocked destination CIDR ranges or IPs (e.g. '10.0.0.0/8', '169.254.169.254/32')."
         },
         "tcp_endpoints": {
           "type": "array",

@@ -376,6 +376,20 @@
           },
           "description": "Whitelisted domain names for HTTP/HTTPS proxy and SNI filter."
         },
+        "allow_networks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Allowed destination CIDR ranges or IPs."
+        },
+        "block_networks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Blocked destination CIDR ranges or IPs."
+        },
         "tcp_endpoints": {
           "type": "array",
           "items": {

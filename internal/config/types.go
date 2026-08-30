@@ -208,6 +208,10 @@ type Network struct {
 	// SNIDomains: name-based policy — CONNECT (proxy mode) resp. TLS SNI
 	// (transparent mode, TCP/443 only).
 	SNIDomains []string `yaml:"sni_domains"`
+	// AllowNetworks: CIDR ranges or IPs explicitly allowed for egress.
+	AllowNetworks []string `yaml:"allow_networks"`
+	// BlockNetworks: CIDR ranges or IPs explicitly blocked for egress.
+	BlockNetworks []string `yaml:"block_networks"`
 	// TCPEndpoints: IP/port-based policy for raw TCP via nftables REDIRECT
 	// + DNS-correlation (transparent mode only); e.g. database connections.
 	TCPEndpoints []TCPEndpoint `yaml:"tcp_endpoints"`

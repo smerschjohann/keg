@@ -176,11 +176,16 @@ kein umliegendes Shell-Skript):
 
 ### 4.2 Egress-Proxy (Host-Seite, Kanal A)
 
-HTTP/CONNECT-Proxy mit zweistufiger Filterung:
+HTTP/CONNECT-Proxy mit mehrstufiger Filterung:
 
-1. **Domain-Check** gegen Whitelist aus der YAML (exakt + `*.domain.tld`).
+1. **Domain-Check** gegen Whitelist aus der YAML bzw. CLI `--allow-sni` (exakt, `*.domain.tld` oder `*` für alle Domains).
    Ablehnung ⇒ `403 Forbidden` inklusive sichtbarem Grund.
-2. **Upstream-Weiterleitung**: Verbindung zum Ziel über den restriktiven
+2. **Netzwerk- und CIDR-Policy (Longest Prefix Match)**: destination IP-Adressen
+   werden gegen `allow_networks` / `block_networks` (bzw. `--allow-network` / `--block-network`)
+   geprüft. Das spezifischere Subnetz gewinnt (z. B. `10.1.2.0/24` erlaubt schlägt `10.0.0.0/8` blockiert).
+   Bei gleicher Maskenlänge gewinnt `block` (fail-closed). Ist `allow_networks` definiert, greift Whitelist-Modus
+   (nicht erwähnte IPs werden geblockt). `--allow-all-network` hebt alle IP-Filter auf.
+3. **Upstream-Weiterleitung**: Verbindung zum Ziel über den restriktiven
    Firmen-Proxy (`CONNECT host HTTP/1.1` → Prüfung auf `200`), alternativ
    direkt. Damit bildet keg das SNI-whitelistende Verhalten der Ziel-
    umgebung lokal ab und fügt die *eigene*, feinere Repo-Whitelist darüber.

@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestMatch(t *testing.T) {
 	t.Parallel()
@@ -94,6 +97,30 @@ func TestMatch(t *testing.T) {
 			patterns: []string{"*."},
 			want:     Deny,
 		},
+		{
+			name:     "wildcard star matches single-level domain",
+			domain:   "example.com",
+			patterns: []string{"*"},
+			want:     Allow,
+		},
+		{
+			name:     "wildcard star matches multi-level domain",
+			domain:   "a.b.c.example.com",
+			patterns: []string{"*"},
+			want:     Allow,
+		},
+		{
+			name:     "wildcard star matches case-insensitively",
+			domain:   "WWW.Example.ORG",
+			patterns: []string{"*"},
+			want:     Allow,
+		},
+		{
+			name:     "wildcard star denies empty domain",
+			domain:   "",
+			patterns: []string{"*"},
+			want:     Deny,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,6 +147,156 @@ func TestMatch_LongestSuffixIsDeterministic(t *testing.T) {
 		}
 		if got := Match("example.com", patterns); got != Deny {
 			t.Fatalf("iteration %d: bare suffix domain unexpectedly allowed: %v", i, got)
+		}
+	}
+}
+
+func TestNetworkPolicy_LongestPrefixMatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		allowCIDRs []string
+		blockCIDRs []string
+		allowAll   bool
+		ip         string
+		want       bool
+	}{
+		{
+			name:       "empty policy allows everything",
+			allowCIDRs: nil,
+			blockCIDRs: nil,
+			ip:         "192.168.1.1",
+			want:       true,
+		},
+		{
+			name:       "allow-all flag overrides block rules",
+			allowCIDRs: nil,
+			blockCIDRs: []string{"0.0.0.0/0"},
+			allowAll:   true,
+			ip:         "192.168.1.1",
+			want:       true,
+		},
+		{
+			name:       "pure blacklist: matching blocked CIDR is denied",
+			allowCIDRs: nil,
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "10.1.2.3",
+			want:       false,
+		},
+		{
+			name:       "pure blacklist: non-matching IP is allowed",
+			allowCIDRs: nil,
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "192.168.1.1",
+			want:       true,
+		},
+		{
+			name:       "pure whitelist: matching allowed CIDR is allowed",
+			allowCIDRs: []string{"10.0.0.0/8"},
+			blockCIDRs: nil,
+			ip:         "10.1.2.3",
+			want:       true,
+		},
+		{
+			name:       "pure whitelist: non-matching IP is denied",
+			allowCIDRs: []string{"10.0.0.0/8"},
+			blockCIDRs: nil,
+			ip:         "192.168.1.1",
+			want:       false,
+		},
+		{
+			name:       "longest prefix match: more specific allow /24 beats broad block /8",
+			allowCIDRs: []string{"10.1.2.0/24"},
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "10.1.2.50",
+			want:       true,
+		},
+		{
+			name:       "longest prefix match: block /8 denies IP outside allow /24",
+			allowCIDRs: []string{"10.1.2.0/24"},
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "10.2.0.1",
+			want:       false,
+		},
+		{
+			name:       "longest prefix match: single IP /32 block beats broad allow /16",
+			allowCIDRs: []string{"192.168.0.0/16"},
+			blockCIDRs: []string{"192.168.1.50/32"},
+			ip:         "192.168.1.50",
+			want:       false,
+		},
+		{
+			name:       "longest prefix match: allowed IP in /16 not matching /32 block is allowed",
+			allowCIDRs: []string{"192.168.0.0/16"},
+			blockCIDRs: []string{"192.168.1.50/32"},
+			ip:         "192.168.1.51",
+			want:       true,
+		},
+		{
+			name:       "internet allow /0 with internal block /8 and specific allow /24",
+			allowCIDRs: []string{"0.0.0.0/0", "10.1.2.0/24"},
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "8.8.8.8",
+			want:       true,
+		},
+		{
+			name:       "internet allow /0 with internal block /8: blocked IP in /8 is denied",
+			allowCIDRs: []string{"0.0.0.0/0", "10.1.2.0/24"},
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "10.5.0.1",
+			want:       false,
+		},
+		{
+			name:       "internet allow /0 with internal block /8: exception in /24 is allowed",
+			allowCIDRs: []string{"0.0.0.0/0", "10.1.2.0/24"},
+			blockCIDRs: []string{"10.0.0.0/8"},
+			ip:         "10.1.2.99",
+			want:       true,
+		},
+		{
+			name:       "bare single IP without slash /32 suffix parsed correctly",
+			allowCIDRs: nil,
+			blockCIDRs: []string{"169.254.169.254"},
+			ip:         "169.254.169.254",
+			want:       false,
+		},
+		{
+			name:       "tie at identical CIDR: block wins (fail-closed)",
+			allowCIDRs: []string{"10.0.0.0/16"},
+			blockCIDRs: []string{"10.0.0.0/16"},
+			ip:         "10.0.1.1",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			policy, err := NewNetworkPolicy(tt.allowCIDRs, tt.blockCIDRs, tt.allowAll)
+			if err != nil {
+				t.Fatalf("NewNetworkPolicy error: %v", err)
+			}
+			ip := net.ParseIP(tt.ip)
+			if ip == nil {
+				t.Fatalf("invalid test IP: %s", tt.ip)
+			}
+			if got := policy.Evaluate(ip); got != tt.want {
+				t.Errorf("policy.Evaluate(%s) = %v, want %v", tt.ip, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewNetworkPolicy_InvalidCIDRErrors(t *testing.T) {
+	t.Parallel()
+	invalid := []string{"not-a-cidr", "999.999.999.999/24", "10.0.0.1/99"}
+	for _, inv := range invalid {
+		if _, err := NewNetworkPolicy([]string{inv}, nil, false); err == nil {
+			t.Errorf("NewNetworkPolicy(allow=%q) expected error, got nil", inv)
+		}
+		if _, err := NewNetworkPolicy(nil, []string{inv}, false); err == nil {
+			t.Errorf("NewNetworkPolicy(block=%q) expected error, got nil", inv)
 		}
 	}
 }

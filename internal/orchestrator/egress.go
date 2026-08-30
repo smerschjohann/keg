@@ -45,6 +45,8 @@ func ProxyEnv(domains []string) map[string]string {
 type EgressProxyConfig struct {
 	// Whitelist of exact domains and "*.suffix" patterns.
 	SNIDomains []string
+	// NetworkPolicy evaluates destination IP addresses against CIDR rules.
+	NetworkPolicy *proxy.NetworkPolicy
 	// UpstreamProxy ("host:port") forwards allowed targets through the
 	// restrictive corporate proxy; empty dials directly.
 	UpstreamProxy string
@@ -171,6 +173,7 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 	}
 	server := proxy.Server{
 		SNIDomains:    cfg.SNIDomains,
+		NetworkPolicy: cfg.NetworkPolicy,
 		UpstreamProxy: cfg.UpstreamProxy,
 		DialTimeout:   0,
 		RawTargetCheck: func(hostPort string) bool {
@@ -223,9 +226,10 @@ func (s *Sandbox) StartEgressDNS(cfg DNSConfig, endpoints []config.TCPEndpoint) 
 	s.rawCfg = rawCfg{DNSConfig: cfg, Endpoints: endpoints}
 	s.closeMu.Unlock()
 	resolver := &dns.Resolver{
-		Hosts:     cfg.Hosts,
-		Whitelist: cfg.Whitelist,
-		Upstream:  cfg.Upstream,
+		Hosts:         cfg.Hosts,
+		Whitelist:     cfg.Whitelist,
+		NetworkPolicy: cfg.NetworkPolicy,
+		Upstream:      cfg.Upstream,
 		Audit: func(allowed bool, name string) {
 			s.closeMu.Lock()
 			audit := s.dnsAudit

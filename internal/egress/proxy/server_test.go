@@ -208,3 +208,69 @@ func TestFormatAudit(t *testing.T) {
 		}
 	}
 }
+
+func TestServer_NetworkPolicyBlocked(t *testing.T) {
+	t.Parallel()
+	var audits []AuditEvent
+	client, server := pipeSessions(t)
+	policy, err := NewNetworkPolicy(nil, []string{"10.0.0.0/8", "169.254.169.254"}, false)
+	if err != nil {
+		t.Fatalf("NewNetworkPolicy: %v", err)
+	}
+
+	startServer(t, server, Server{
+		SNIDomains:    []string{"*"},
+		NetworkPolicy: policy,
+		DialTimeout:   time.Second,
+		Audit:         func(e AuditEvent) { audits = append(audits, e) },
+	})
+
+	// 1. IP literal blocked by policy
+	resp, _ := speakCONNECT(t, client, "10.1.2.3:443")
+	if !strings.HasPrefix(resp.Status, "403") {
+		t.Fatalf("expected 403 for blocked IP, got %q", resp.Status)
+	}
+	_ = resp.Body.Close()
+
+	// 2. Metadata IP blocked by policy
+	resp, _ = speakCONNECT(t, client, "169.254.169.254:80")
+	if !strings.HasPrefix(resp.Status, "403") {
+		t.Fatalf("expected 403 for metadata IP, got %q", resp.Status)
+	}
+	_ = resp.Body.Close()
+
+	if len(audits) != 2 {
+		t.Fatalf("expected 2 audits, got %d", len(audits))
+	}
+	if audits[0].Allowed || audits[0].Host != "10.1.2.3:443" {
+		t.Errorf("audit 0 mismatch: %+v", audits[0])
+	}
+	if audits[1].Allowed || audits[1].Host != "169.254.169.254:80" {
+		t.Errorf("audit 1 mismatch: %+v", audits[1])
+	}
+}
+
+func TestServer_NetworkPolicyAllowed(t *testing.T) {
+	t.Parallel()
+	target := echoServer(t)
+	client, server := pipeSessions(t)
+
+	// Block 10.0.0.0/8, but allow 127.0.0.0/8 (where target runs)
+	policy, err := NewNetworkPolicy([]string{"127.0.0.0/8"}, []string{"10.0.0.0/8"}, false)
+	if err != nil {
+		t.Fatalf("NewNetworkPolicy: %v", err)
+	}
+
+	startServer(t, server, Server{
+		SNIDomains:    []string{"*"},
+		NetworkPolicy: policy,
+		Dial:          fakeDial(target),
+	})
+
+	resp, stream := speakCONNECT(t, client, "127.0.0.1:"+portOf(target))
+	if !strings.HasPrefix(resp.Status, "200") {
+		t.Fatalf("expected 200 for allowed IP, got %q", resp.Status)
+	}
+	_ = resp.Body.Close()
+	_ = stream.Close()
+}

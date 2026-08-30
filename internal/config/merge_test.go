@@ -312,6 +312,10 @@ network:
       local.host: 2.2.2.2
   sni_domains:
     - daily-cloudcode-pa.googleapis.com
+  allow_networks:
+    - 10.1.2.0/24
+  block_networks:
+    - 10.0.0.0/8
   tcp_endpoints:
     - host: daily-cloudcode-pa.googleapis.com
       ports: [443]
@@ -328,6 +332,12 @@ env:
 	}
 	if len(got.Network.SNIDomains) != 2 {
 		t.Errorf("sni_domains = %v, want 2 domains", got.Network.SNIDomains)
+	}
+	if len(got.Network.AllowNetworks) != 1 || got.Network.AllowNetworks[0] != "10.1.2.0/24" {
+		t.Errorf("allow_networks = %v, want [10.1.2.0/24]", got.Network.AllowNetworks)
+	}
+	if len(got.Network.BlockNetworks) != 1 || got.Network.BlockNetworks[0] != "10.0.0.0/8" {
+		t.Errorf("block_networks = %v, want [10.0.0.0/8]", got.Network.BlockNetworks)
 	}
 	if len(got.Network.TCPEndpoints) != 2 {
 		t.Errorf("tcp_endpoints = %v, want 2 endpoints", got.Network.TCPEndpoints)

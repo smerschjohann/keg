@@ -40,6 +40,10 @@ type configOptions struct {
 	stdout            io.Writer
 	stderr            io.Writer
 	command           []string
+	allowSNI          []string
+	allowNetworks     []string
+	blockNetworks     []string
+	allowAllNetwork   bool
 }
 
 func defaultOptions() *configOptions {
@@ -106,6 +110,26 @@ func WithStderr(w io.Writer) Option {
 // WithCommand sets the command to execute inside the sandbox.
 func WithCommand(cmd ...string) Option {
 	return func(o *configOptions) { o.command = cmd }
+}
+
+// WithAllowSNI permits additional egress domains or wildcard patterns ("*").
+func WithAllowSNI(domains ...string) Option {
+	return func(o *configOptions) { o.allowSNI = append(o.allowSNI, domains...) }
+}
+
+// WithAllowNetwork permits specific destination CIDRs or IPs.
+func WithAllowNetwork(cidrs ...string) Option {
+	return func(o *configOptions) { o.allowNetworks = append(o.allowNetworks, cidrs...) }
+}
+
+// WithBlockNetwork blocks specific destination CIDRs or IPs.
+func WithBlockNetwork(cidrs ...string) Option {
+	return func(o *configOptions) { o.blockNetworks = append(o.blockNetworks, cidrs...) }
+}
+
+// WithAllowAllNetwork disables all destination CIDR/IP restrictions.
+func WithAllowAllNetwork() Option {
+	return func(o *configOptions) { o.allowAllNetwork = true }
 }
 
 // SecretPath returns the in-sandbox path for a given secret name.
@@ -198,6 +222,20 @@ func Launch(ctx context.Context, repoRoot string, opts ...Option) (*Sandbox, err
 	plan, userCfg, err := orchestrator.BuildPlan(repoRoot, cfg.repoConfig, cfg.userConfig, overlay, cfg.diskOverlay, cacheOverlay, cfg.isolatedCacheName, cfg.instanceName)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.allowAllNetwork {
+		plan.AllowAllNetwork = true
+	}
+	if len(cfg.allowNetworks) > 0 || len(cfg.blockNetworks) > 0 {
+		if err := orchestrator.AddNetworkCIDRsToPlan(&plan, cfg.allowNetworks, cfg.blockNetworks); err != nil {
+			return nil, err
+		}
+	}
+	if len(cfg.allowSNI) > 0 {
+		if err := orchestrator.AddSNIDomainsToPlan(&plan, cfg.allowSNI); err != nil {
+			return nil, err
+		}
 	}
 
 	if cfg.auditFile != "" {

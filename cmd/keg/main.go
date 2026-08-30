@@ -94,6 +94,25 @@ func NewCommand() *cli.Command {
 						Aliases: []string{"L", "forward"},
 						Usage:   "forward a host/network service into the container (e.g. -L 2345:127.0.0.1:1234, -L 5432:db.internal:5432) (repeatable)",
 					},
+					&cli.StringSliceFlag{
+						Name:    "allow-sni",
+						Aliases: []string{"sni"},
+						Usage:   "allow additional egress domain/SNI in sandbox (e.g. --allow-sni proxy.golang.org, --allow-sni \"*.example.com\", --allow-sni \"*\") (repeatable)",
+					},
+					&cli.StringSliceFlag{
+						Name:    "allow-network",
+						Aliases: []string{"allow-net", "allow-cidr"},
+						Usage:   "allow egress to specific destination CIDR ranges or IPs (repeatable)",
+					},
+					&cli.StringSliceFlag{
+						Name:    "block-network",
+						Aliases: []string{"block-net", "block-cidr"},
+						Usage:   "block egress to specific destination CIDR ranges or IPs (repeatable)",
+					},
+					&cli.BoolFlag{
+						Name:  "allow-all-network",
+						Usage: "disable all network/CIDR blocks and allow unrestricted destination IPs",
+					},
 					&cli.BoolFlag{
 						Name:  "inherit-all",
 						Usage: "pass through all host environment variables (except denied credentials/proxies)",

@@ -60,6 +60,32 @@ func TestPublicAPI_OptionsAndDefaults(t *testing.T) {
 	}
 }
 
+func TestPublicAPI_NetworkOptions(t *testing.T) {
+	cfg := defaultOptions()
+	opts := []Option{
+		WithAllowSNI("proxy.golang.org", "*.example.com"),
+		WithAllowNetwork("10.1.2.0/24"),
+		WithBlockNetwork("10.0.0.0/8", "169.254.169.254"),
+		WithAllowAllNetwork(),
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	if len(cfg.allowSNI) != 2 || cfg.allowSNI[0] != "proxy.golang.org" {
+		t.Errorf("allowSNI = %v", cfg.allowSNI)
+	}
+	if len(cfg.allowNetworks) != 1 || cfg.allowNetworks[0] != "10.1.2.0/24" {
+		t.Errorf("allowNetworks = %v", cfg.allowNetworks)
+	}
+	if len(cfg.blockNetworks) != 2 || cfg.blockNetworks[1] != "169.254.169.254" {
+		t.Errorf("blockNetworks = %v", cfg.blockNetworks)
+	}
+	if !cfg.allowAllNetwork {
+		t.Errorf("allowAllNetwork = false, want true")
+	}
+}
+
 func TestPublicAPI_SecretPath(t *testing.T) {
 	sb := &Sandbox{}
 	if path := sb.SecretPath("ai_token"); path != "/run/secrets/ai_token" {

@@ -34,6 +34,31 @@ func TestParseRepo_MinimalValid(t *testing.T) {
 	}
 }
 
+func TestParseRepo_AllowAndBlockNetworks(t *testing.T) {
+	raw := `
+version: "1"
+network:
+  sni_domains:
+    - "*"
+  allow_networks:
+    - 10.1.2.0/24
+    - 192.168.1.1
+  block_networks:
+    - 10.0.0.0/8
+    - 169.254.169.254/32
+`
+	repo, err := ParseRepo([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseRepo with allow/block networks failed: %v", err)
+	}
+	if len(repo.Network.AllowNetworks) != 2 || repo.Network.AllowNetworks[0] != "10.1.2.0/24" {
+		t.Errorf("repo.Network.AllowNetworks = %v", repo.Network.AllowNetworks)
+	}
+	if len(repo.Network.BlockNetworks) != 2 || repo.Network.BlockNetworks[1] != "169.254.169.254/32" {
+		t.Errorf("repo.Network.BlockNetworks = %v", repo.Network.BlockNetworks)
+	}
+}
+
 func TestParseRepo_RejectsUnknownField(t *testing.T) {
 	tests := []struct {
 		name     string

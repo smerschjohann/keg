@@ -110,6 +110,14 @@ bin/keg run --inherit-all -- bash
 
 # Combine: Pass through all host variables plus explicitly allowed sensitive vars:
 bin/keg run --inherit-all -e AWS_SESSION_TOKEN -e HTTP_PROXY -- bash
+
+# Allow extra egress domains or wildcard all (*):
+bin/keg run --allow-sni proxy.golang.org --allow-sni "*.example.com" -- bash
+bin/keg run --allow-sni "*" -- bash
+
+# Allow/block destination CIDRs or single IPs (Longest Prefix Match):
+bin/keg run --allow-network 10.1.2.0/24 --block-network 10.0.0.0/8 -- bash
+bin/keg run --allow-all-network -- bash
 ```
 
 #### 2. Repository Approval & Trust (`keg trust`)
@@ -261,6 +269,12 @@ network:
     - api.anthropic.com
     - api.openai.com
     - proxy.golang.org
+    - "*"                     # Wildcard: allow all SNI/domains
+  allow_networks:
+    - 10.1.2.0/24             # Whitelist specific subnets
+  block_networks:
+    - 10.0.0.0/8              # Blacklist/block subnets (Longest Prefix Match)
+    - 169.254.169.254/32      # Block cloud metadata endpoint
 
 # Port back-channel: Forward host connections into sandbox (§4.9)
 #

@@ -1316,3 +1316,99 @@ env:
 		t.Errorf("plan.EnvSet[GREETING] = %q, want %q", plan.EnvSet["GREETING"], "cli_override")
 	}
 }
+
+func TestParseSNIFlags(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		entries []string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:    "empty entries returns nil",
+			entries: nil,
+			want:    nil,
+		},
+		{
+			name:    "single domain",
+			entries: []string{"proxy.golang.org"},
+			want:    []string{"proxy.golang.org"},
+		},
+		{
+			name:    "wildcard star",
+			entries: []string{"*"},
+			want:    []string{"*"},
+		},
+		{
+			name:    "multiple flags and comma separated",
+			entries: []string{"a.example.com,b.example.com", "c.example.com", "*.d.example.com"},
+			want:    []string{"a.example.com", "b.example.com", "c.example.com", "*.d.example.com"},
+		},
+		{
+			name:    "empty entry errors",
+			entries: []string{""},
+			wantErr: true,
+		},
+		{
+			name:    "empty comma part errors",
+			entries: []string{"a.com,,b.com"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseSNIFlags(tt.entries)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseSNIFlags(%v) error = %v, wantErr %v", tt.entries, err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseSNIFlags(%v) = %v, want %v", tt.entries, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNetworkCIDRFlags(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		entries []string
+		want    []string
+		wantErr bool
+	}{
+		{
+			name:    "empty entries returns nil",
+			entries: nil,
+			want:    nil,
+		},
+		{
+			name:    "valid CIDRs and bare IPs",
+			entries: []string{"10.0.0.0/8,169.254.169.254", "192.168.1.0/24"},
+			want:    []string{"10.0.0.0/8", "169.254.169.254", "192.168.1.0/24"},
+		},
+		{
+			name:    "empty entry errors",
+			entries: []string{""},
+			wantErr: true,
+		},
+		{
+			name:    "invalid CIDR errors",
+			entries: []string{"invalid-cidr"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseNetworkCIDRFlags(tt.entries)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseNetworkCIDRFlags(%v) error = %v, wantErr %v", tt.entries, err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseNetworkCIDRFlags(%v) = %v, want %v", tt.entries, got, tt.want)
+			}
+		})
+	}
+}

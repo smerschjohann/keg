@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -39,6 +38,9 @@ type Server struct {
 	// the domain whitelist (transparent raw-TCP mode): it receives
 	// "ip:port" and decides. Domain names are never routed through it.
 	RawTargetCheck func(hostPort string) bool
+	// NetworkPolicy evaluates destination IP addresses against allow and
+	// block CIDRs (Longest Prefix Match).
+	NetworkPolicy *NetworkPolicy
 }
 
 // AuditEvent records one whitelist decision.
@@ -58,85 +60,75 @@ func FormatAudit(allowed bool, host string) string {
 
 // Serve accepts streams from sess until the session closes. Each stream
 // carries exactly one proxied request; handlers run concurrently and unwind
-// when their stream breaks, so a dead session leaks nothing (verified by
-// TestServer_GoroutineLeakFree).
+// when the client disconnects or the tunneled connection dies.
 func Serve(sess muxado.Session, cfg Server) error {
 	for {
 		stream, err := sess.Accept()
 		if err != nil {
-			return fmt.Errorf("proxy: accept: %w", err)
+			return err
 		}
 		go handleStream(stream, cfg)
 	}
 }
 
+// handleStream routes either a CONNECT tunnel or a plain HTTP proxy request.
 func handleStream(stream net.Conn, cfg Server) {
-	defer func() { _ = stream.Close() }() // tunnel teardown on any exit path
+	defer func() { _ = stream.Close() }()
 
-	req, err := http.ReadRequest(bufio.NewReader(stream))
+	br := bufio.NewReader(stream)
+	req, err := http.ReadRequest(br)
 	if err != nil {
-		writeSimpleStatus(stream, http.StatusBadRequest,
-			"keg proxy: malformed request")
-		return
+		return // bad or aborted request: drop silently
 	}
 
 	if req.Method == http.MethodConnect {
-		handleConnect(stream, req, cfg)
+		handleCONNECT(stream, req, cfg)
 		return
 	}
-	handlePlainHTTP(stream, req, cfg)
+	handleHTTP(stream, req, cfg)
 }
 
-// handleConnect applies the two-stage filter from CONCEPT.md §4.2:
-// whitelist first, then upstream/direct dial, then full-duplex tunneling.
-func handleConnect(stream net.Conn, req *http.Request, cfg Server) {
-	target := req.Host // authority form: "host:port"
+func handleCONNECT(stream net.Conn, req *http.Request, cfg Server) {
+	target := req.RequestURI
 	if !decide(cfg, target) {
-		writeSimpleStatus(stream, http.StatusForbidden,
-			fmt.Sprintf("keg proxy: CONNECT to %s denied: host is not whitelisted", target))
+		writeSimpleStatus(stream, http.StatusForbidden, "keg proxy: domain or IP not whitelisted")
 		return
 	}
 
-	upstream, err := dialTarget(stream, target, cfg)
+	out, err := dialTarget(stream, target, cfg)
 	if err != nil {
 		writeSimpleStatus(stream, http.StatusBadGateway,
-			fmt.Sprintf("keg proxy: cannot reach %s: %v", target, err))
+			fmt.Sprintf("keg proxy: cannot connect to %s: %v", target, err))
 		return
 	}
-	defer func() { _ = upstream.Close() }()
+	defer func() { _ = out.Close() }()
 
-	// 200 switches the stream into raw tunnel mode.
 	if _, err := io.WriteString(stream, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}
-	tunnel(stream, upstream)
+	tunnel(stream, out)
 }
 
-// handlePlainHTTP forwards origin-form requests after checking the Host
-// header against the whitelist. Responses are relayed verbatim.
-func handlePlainHTTP(stream net.Conn, req *http.Request, cfg Server) {
+func handleHTTP(stream net.Conn, req *http.Request, cfg Server) {
 	host := req.Host
 	if host == "" {
 		host = req.URL.Host
 	}
+	if host == "" {
+		writeSimpleStatus(stream, http.StatusBadRequest, "keg proxy: missing Host header")
+		return
+	}
 	if !decide(cfg, host) {
-		writeSimpleStatus(stream, http.StatusForbidden,
-			fmt.Sprintf("keg proxy: request to %s denied: host is not whitelisted", host))
+		writeSimpleStatus(stream, http.StatusForbidden, "keg proxy: domain or IP not whitelisted")
 		return
 	}
 
+	timeout := cfg.dialTimeout()
 	transport := &http.Transport{
-		Proxy: func(*http.Request) (*url.URL, error) {
-			if cfg.UpstreamProxy == "" {
-				return nil, nil
-			}
-			return url.Parse("http://" + cfg.UpstreamProxy)
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialTarget(stream, addr, cfg)
 		},
-	}
-	if cfg.Dial != nil {
-		transport.DialContext = cfg.Dial
-	} else {
-		transport.DialContext = (&net.Dialer{Timeout: cfg.dialTimeout()}).DialContext
+		ResponseHeaderTimeout: timeout,
 	}
 	// ReadRequest produces server-shaped requests; reshape minimally for
 	// transport-level forwarding.
@@ -166,6 +158,11 @@ func decide(cfg Server, hostPort string) bool {
 			allowed = cfg.RawTargetCheck(hostPort)
 		}
 	}
+	if allowed && cfg.NetworkPolicy != nil {
+		if ip := net.ParseIP(hostOnly); ip != nil {
+			allowed = cfg.NetworkPolicy.Evaluate(ip)
+		}
+	}
 	if cfg.Audit != nil {
 		cfg.Audit(AuditEvent{Allowed: allowed, Host: hostPort})
 	}
@@ -180,8 +177,44 @@ func dialTarget(_ net.Conn, target string, cfg Server) (net.Conn, error) {
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: timeout}).DialContext
 	}
+
+	dialTargetAddr := target
+	if cfg.NetworkPolicy != nil {
+		hostOnly := target
+		portOnly := "80"
+		if h, p, err := net.SplitHostPort(target); err == nil {
+			hostOnly = h
+			portOnly = p
+		}
+		if ip := net.ParseIP(hostOnly); ip != nil {
+			if !cfg.NetworkPolicy.Evaluate(ip) {
+				return nil, fmt.Errorf("target IP %s blocked by network policy", ip)
+			}
+		} else if cfg.Dial == nil {
+			// Hostname resolution with default dialer: evaluate resolved IPs
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", hostOnly)
+			if err == nil && len(ips) > 0 {
+				var allowedIP net.IP
+				for _, ip := range ips {
+					if cfg.NetworkPolicy.Evaluate(ip) {
+						allowedIP = ip
+						break
+					}
+				}
+				if allowedIP == nil {
+					return nil, fmt.Errorf("target %s resolves only to blocked IP(s)", hostOnly)
+				}
+				if cfg.UpstreamProxy == "" {
+					dialTargetAddr = net.JoinHostPort(allowedIP.String(), portOnly)
+				}
+			}
+		}
+	}
+
 	if cfg.UpstreamProxy == "" {
-		return dial(context.Background(), "tcp", target)
+		return dial(context.Background(), "tcp", dialTargetAddr)
 	}
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(context.Background(), "tcp", cfg.UpstreamProxy)
