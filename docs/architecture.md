@@ -25,7 +25,7 @@
 │        unshare -U --map-users=<uid>:<uid>:1 --map-groups=… -n -m -p --fork --keep-caps │
 │                     │                                                       │
 │                     ▼  exec                                                 │
-│  ┌── NETNS-STAGE (Prozess #2, argv[1]=keg/netns-stage) ──────────────┐  │
+│  ┌── NETNS-STAGE (Prozess #2, argv[1]=netns-stage) ──────────────────┐  │
 │  │  besitzt PRIVATE user+netns ── nur lo, KEINE Routen                   │  │
 │  │  ├── ip link set lo up                                                │  │
 │  │  ├── ip_unprivileged_port_start = 0        (per-Netns!)               │  │
@@ -38,7 +38,7 @@
 │  ┌── SANDBOX (bwrap: --unshare-all --share-net --disable-userns …) ──────┐ │
 │  │  Mounts: /usr ro · Repo rw|overlay|ephemeral · /etc/hosts · resolv.conf│ │
 │  │                                                                       │ │
-│  │  GUEST (argv[1]=keg/guest)                                        │ │
+│  │  GUEST (argv[1]=guest)                                                │ │
 │  │  ├── Env-Hygiene (2. Verteidigungslinie) + FD-Scrub                   │ │
 │  │  └── exec <Workload>   ◄── kein Bridge-Code mehr: direktes Exec       │ │
 │  │                                                                       │ │

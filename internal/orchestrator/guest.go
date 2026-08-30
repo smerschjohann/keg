@@ -38,7 +38,7 @@ const EnvLandlockWritable = "KEG_LANDLOCK_WRITABLE"
 
 // GuestCommandName is the reexec name under which the sandbox entrypoint
 // runs (second invocation of the same binary inside bwrap).
-const GuestCommandName = "github.com/smerschjohann/keg/guest"
+const GuestCommandName = "guest"
 
 func init() {
 	reexec.Register(GuestCommandName, guestMain)

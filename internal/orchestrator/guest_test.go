@@ -18,6 +18,17 @@ import (
 	"golang.ngrok.com/muxado"
 )
 
+// TestGuestCommandNames verifies that internal reexec / entrypoint command
+// names are short and clean rather than full module paths.
+func TestGuestCommandNames(t *testing.T) {
+	if GuestCommandName != "guest" {
+		t.Errorf("GuestCommandName = %q, want %q", GuestCommandName, "guest")
+	}
+	if NetnsStageCommandName != "netns-stage" {
+		t.Errorf("NetnsStageCommandName = %q, want %q", NetnsStageCommandName, "netns-stage")
+	}
+}
+
 // TestGuest_ExecsCommand verifies the reexec entrypoint transparently
 // execs the given command.
 func TestGuest_ExecsCommand(t *testing.T) {

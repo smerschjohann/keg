@@ -23,7 +23,7 @@ import (
 // prepares the network (loopback up, low ports allowed), serves the DNS
 // resolver on loopback :53 and finally execs bwrap so the sandbox shares
 // this namespace.
-const NetnsStageCommandName = "github.com/smerschjohann/keg/netns-stage"
+const NetnsStageCommandName = "netns-stage"
 
 // stageEnvVar carries the marshalled stageConfig into the stage process.
 const stageEnvVar = "KEG_STAGE"
