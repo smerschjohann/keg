@@ -330,4 +330,3 @@ func shouldBypassProxy(target string, resolveRawHost func(string) string) bool {
 	}
 	return false
 }
-

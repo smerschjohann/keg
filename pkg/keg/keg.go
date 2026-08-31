@@ -52,6 +52,28 @@ func defaultOptions() *configOptions {
 	}
 }
 
+// InitGuestDispatch must be called at the very beginning of the process
+// entry point (main() or TestMain) of every binary that uses Launch:
+//
+//	func main() {
+//		if keg.InitGuestDispatch() {
+//			return
+//		}
+//		// ... normal program flow; keg.Launch(...) is now safe to call.
+//	}
+//
+// Launch reexecs the *calling* binary as the sandbox stages and guest
+// entrypoint (netns stage via argv[1], guest via argv[0]/argv[1]). The
+// binary must therefore recognize those reentry shapes and delegate to the
+// sandbox entrypoint instead of its normal work — otherwise a guest
+// re-invocation silently re-executes the caller's regular payload (e.g. a
+// test binary re-runs its whole suite inside the sandbox). The gate returns
+// true when this process IS a sandbox component; callers then return
+// immediately. Host processes (no reentry shape) get false.
+func InitGuestDispatch() bool {
+	return orchestrator.InitGuestDispatch()
+}
+
 // WithRepoConfig sets an explicit path to .keg.yaml.
 func WithRepoConfig(path string) Option {
 	return func(o *configOptions) { o.repoConfig = path }

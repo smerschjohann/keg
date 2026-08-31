@@ -194,6 +194,13 @@ import (
 )
 
 func main() {
+	// REQUIRED: Launch reexecs this binary as the sandbox stages and guest
+	// entrypoint; without the gate a re-invocation would re-run the normal
+	// program flow inside the sandbox (for test binaries: the whole suite).
+	if keg.InitGuestDispatch() {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
