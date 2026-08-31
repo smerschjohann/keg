@@ -182,6 +182,15 @@ func (s *Sandbox) StartEgressProxy(cfg EgressProxyConfig) error {
 			s.closeMu.Unlock()
 			return raw != nil && raw.check(hostPort)
 		},
+		ResolveRawHost: func(ip string) string {
+			s.closeMu.Lock()
+			raw := s.raw
+			s.closeMu.Unlock()
+			if raw == nil {
+				return ""
+			}
+			return raw.resolveHost(ip)
+		},
 		Audit: func(ev proxy.AuditEvent) {
 			s.closeMu.Lock()
 			audit := s.proxyAudit

@@ -76,6 +76,21 @@ func (r *rawEndpoints) check(ipPort string) bool {
 	return false
 }
 
+// resolveHost returns the correlated hostname for ip, if a live correlation exists.
+func (r *rawEndpoints) resolveHost(ip string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.byIP[ip]
+	if !ok {
+		return ""
+	}
+	if !r.now().Before(entry.expiresAt) {
+		delete(r.byIP, ip)
+		return ""
+	}
+	return entry.host
+}
+
 // rawCfg bundles the DNS policy with the raw-TCP endpoint allowlist.
 type rawCfg struct {
 	DNSConfig

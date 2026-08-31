@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +40,8 @@ type Server struct {
 	// the domain whitelist (transparent raw-TCP mode): it receives
 	// "ip:port" and decides. Domain names are never routed through it.
 	RawTargetCheck func(hostPort string) bool
+	// ResolveRawHost, if set, returns the correlated hostname for an IP.
+	ResolveRawHost func(ip string) string
 	// NetworkPolicy evaluates destination IP addresses against allow and
 	// block CIDRs (Longest Prefix Match).
 	NetworkPolicy *NetworkPolicy
@@ -213,7 +217,7 @@ func dialTarget(_ net.Conn, target string, cfg Server) (net.Conn, error) {
 		}
 	}
 
-	if cfg.UpstreamProxy == "" {
+	if cfg.UpstreamProxy == "" || shouldBypassProxy(target, cfg.ResolveRawHost) {
 		return dial(context.Background(), "tcp", dialTargetAddr)
 	}
 	dialer := &net.Dialer{Timeout: timeout}
@@ -274,3 +278,56 @@ func (cfg Server) dialTimeout() time.Duration {
 	}
 	return DefaultDialTimeout
 }
+
+// shouldBypassProxy reports whether target (or its correlated host) should bypass UpstreamProxy according to NO_PROXY / no_proxy.
+func shouldBypassProxy(target string, resolveRawHost func(string) string) bool {
+	noProxy := os.Getenv("NO_PROXY")
+	if noProxy == "" {
+		noProxy = os.Getenv("no_proxy")
+	}
+	if noProxy == "" {
+		return false
+	}
+	if noProxy == "*" {
+		return true
+	}
+
+	hostOnly := target
+	if h, _, err := net.SplitHostPort(target); err == nil {
+		hostOnly = h
+	}
+
+	hostsToCheck := []string{hostOnly}
+	if resolveRawHost != nil {
+		if resolved := resolveRawHost(hostOnly); resolved != "" {
+			hostsToCheck = append(hostsToCheck, resolved)
+		}
+	}
+
+	for _, item := range strings.Split(noProxy, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		for _, h := range hostsToCheck {
+			hLower := strings.ToLower(h)
+			itemLower := strings.ToLower(item)
+			if itemLower == "*" || hLower == itemLower {
+				return true
+			}
+			if strings.HasPrefix(itemLower, ".") && (strings.HasSuffix(hLower, itemLower) || hLower == strings.TrimPrefix(itemLower, ".")) {
+				return true
+			}
+			if strings.HasSuffix(hLower, "."+itemLower) {
+				return true
+			}
+			if ip := net.ParseIP(h); ip != nil {
+				if _, ipNet, err := net.ParseCIDR(item); err == nil && ipNet.Contains(ip) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
