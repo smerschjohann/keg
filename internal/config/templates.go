@@ -42,6 +42,7 @@ func ExpandTemplates(names []string, sandboxHome string, tc ToolchainPaths) ([]M
 				mounts = append(mounts, Mount{Src: tc.GoBuildCache, Dest: env["GOCACHE"], Mode: MountRW})
 			}
 		case "java":
+			env["MAVEN_ARGS"] = "-s " + sandboxHome + "/.m2/settings.xml"
 			env["MAVEN_OPTS"] = "-Dmaven.repo.local=" + sandboxHome + "/.m2/repository"
 			mounts = append(mounts, Mount{Src: "~/.m2", Dest: sandboxHome + "/.m2", Mode: MountRW})
 		case "node":

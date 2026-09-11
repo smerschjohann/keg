@@ -68,9 +68,12 @@ func TestExpandTemplates_FixedPathTemplates(t *testing.T) {
 		sandboxSub string // dest is <home>/<sandboxSub>
 	}{
 		{
-			name:       "java maven repository",
-			template:   "java",
-			wantEnv:    map[string]string{"MAVEN_OPTS": "-Dmaven.repo.local=/home/sandbox/.m2/repository"},
+			name:     "java maven repository",
+			template: "java",
+			wantEnv: map[string]string{
+				"MAVEN_ARGS": "-s /home/sandbox/.m2/settings.xml",
+				"MAVEN_OPTS": "-Dmaven.repo.local=/home/sandbox/.m2/repository",
+			},
 			wantSrc:    "~/.m2",
 			wantDest:   ".m2",
 			sandboxSub: "",

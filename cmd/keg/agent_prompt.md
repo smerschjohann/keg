@@ -148,6 +148,49 @@ delegated_tasks:
 
 ---
 
+### Toolchain binaries and PATH
+
+Do not replace `PATH` with `env.set.PATH` in the repository configuration.
+Use `paths.prepend` or `paths.append` for directories that are already
+available inside the sandbox. Host-specific tool installations must be
+declared in the machine-local user config together with a read-only mount;
+adding a host directory to `PATH` alone does not make its files available
+inside the sandbox.
+
+For example, a host with Maven 3.9 and Java 17 installed under `/opt` and
+`/usr/lib/jvm` can use this in `~/.config/keg/config.yaml`:
+
+```yaml
+mounts:
+  - src: /opt/apache-maven-3.9.16
+    dest: /opt/apache-maven-3.9.16
+    mode: ro
+  - src: /usr/lib/jvm/java-17-zulu-openjdk-ca
+    dest: /usr/lib/jvm/java-17-zulu-openjdk-ca
+    mode: ro
+
+paths:
+  prepend:
+    - /opt/apache-maven-3.9.16/bin
+    - /usr/lib/jvm/java-17-zulu-openjdk-ca/bin
+
+env:
+  set:
+    JAVA_HOME: /usr/lib/jvm/java-17-zulu-openjdk-ca
+```
+
+Keep the repository configuration portable and select the language template
+there instead:
+
+```yaml
+templates:
+  - java
+```
+
+The `java` template mounts `~/.m2` at the sandbox home and automatically sets
+Maven to use `/home/sandbox/.m2/settings.xml`; do not add a host-specific
+`-s` argument to repository commands.
+
 ## 4. User Machine Configuration (`~/.config/keg/config.yaml`)
 
 Machine-local paths and secret provider mechanisms live in user config:

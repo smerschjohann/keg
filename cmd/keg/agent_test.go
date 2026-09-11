@@ -33,6 +33,8 @@ func TestCLI_AgentPrompt(t *testing.T) {
 			"just delegate",
 			"delegated_tasks",
 			"import 'sandbox.just'",
+			"paths.prepend",
+			"Maven",
 		} {
 			if !strings.Contains(output, want) {
 				t.Errorf("agent prompt missing expected text %q", want)
