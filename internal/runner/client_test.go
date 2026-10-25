@@ -107,3 +107,63 @@ func TestSocketPath_ConstantMatchesGuestBridge(t *testing.T) {
 		t.Errorf("SocketPath = %q, must be absolute inside the sandbox", SocketPath)
 	}
 }
+
+func TestList_QueriesServerAndFormatsTaskList(t *testing.T) {
+	guestEnd, hostEnd := socketpairTCP(t)
+	wantTasks := []TaskInfo{
+		{
+			Name:        "container-build",
+			Kind:        "exact",
+			Description: "Build container image on host",
+		},
+		{
+			Name:        "test-playwright",
+			Kind:        "prefix",
+			Description: "Run Playwright browser tests",
+		},
+		{
+			Name:                  "git",
+			Kind:                  "raw",
+			Description:           "Run safe local git operations",
+			Subcommands:           []string{"status", "diff", "commit"},
+			OptsWithValue:         []string{"-c", "-C"},
+			Flags:                 []string{"--no-pager"},
+			AllowOptValueForm:     true,
+			ForbiddenArgsMatching: []string{"https://*", "git@*"},
+		},
+	}
+	speakEvents(t, hostEnd, []Event{{Type: EventList, Tasks: wantTasks}})
+
+	got, err := List(guestEnd)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(got) != len(wantTasks) {
+		t.Fatalf("len(got) = %d, want %d", len(got), len(wantTasks))
+	}
+
+	formatted := FormatTaskList(got)
+	for _, wantSub := range []string{
+		"container-build",
+		"[exact]",
+		"Build container image on host",
+		"test-playwright",
+		"[prefix]",
+		"Run Playwright browser tests",
+		"git",
+		"[raw]",
+		"Run safe local git operations",
+		"status, diff, commit",
+		"-c <val>, -C <val>, --no-pager",
+		"https://*, git@*",
+	} {
+		if !strings.Contains(formatted, wantSub) {
+			t.Errorf("FormatTaskList output missing %q:\n%s", wantSub, formatted)
+		}
+	}
+
+	emptyFormatted := FormatTaskList(nil)
+	if !strings.Contains(emptyFormatted, "No delegated tasks configured") {
+		t.Errorf("empty FormatTaskList = %q, want 'No delegated tasks configured'", emptyFormatted)
+	}
+}

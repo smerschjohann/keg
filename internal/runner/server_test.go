@@ -579,3 +579,32 @@ func TestServer_ValidateTrustGate(t *testing.T) {
 	_ = stream2.Close()
 	_ = client.Close()
 }
+
+func TestServer_ListRequestReturnsWhitelistedTasks(t *testing.T) {
+	client, server := pipeSessions(t)
+	engine := baseEngine(t)
+	engine.SetFallbackDescriptions(map[string]string{
+		"test-playwright": "Run Playwright tests on the host",
+	})
+	cfg := ServerConfig{
+		Engine:   engine,
+		JustBin:  fakeJustBin(t),
+		RepoRoot: t.TempDir(),
+	}
+	go func() { _ = ServeSession(server, cfg) }()
+
+	stream := openStream(t, client)
+	tasks, err := List(stream)
+	if err != nil {
+		t.Fatalf("List(stream) error = %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("len(tasks) = %d, want 2: %+v", len(tasks), tasks)
+	}
+	if tasks[0].Name != "test-playwright" || tasks[0].Description != "Run Playwright tests on the host" {
+		t.Errorf("tasks[0] = %+v", tasks[0])
+	}
+	if tasks[1].Name != "git" || tasks[1].Kind != "raw" {
+		t.Errorf("tasks[1] = %+v", tasks[1])
+	}
+}

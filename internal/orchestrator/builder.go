@@ -462,6 +462,9 @@ func BuildPlan(repoDir, repoCfgPath, userCfgPath string, overlay Overlay, diskNa
 	tasks.Exact = append(tasks.Exact, effective.Runner.ExtraExact...)
 	tasks.Prefixes = append(tasks.Prefixes, effective.Runner.ExtraPrefixes...)
 	tasks.Raw = append(tasks.Raw, effective.Runner.ExtraRaw...)
+	if len(tasks.Descriptions) > 0 || len(effective.Runner.Descriptions) > 0 {
+		tasks.Descriptions = config.MergeStringMaps(tasks.Descriptions, effective.Runner.Descriptions)
+	}
 	if len(tasks.Exact) > 0 || len(tasks.Prefixes) > 0 || len(tasks.Raw) > 0 {
 		plan.DelegatedTasks = tasks
 		plan.UserRunnerCfg = effective.Runner
@@ -578,6 +581,7 @@ func StartBackgroundServices(ctx context.Context, sb *Sandbox, plan Plan, user *
 		if engineErr != nil {
 			return fmt.Errorf("delegation whitelist: %w", engineErr)
 		}
+		engine.SetFallbackDescriptions(config.DiscoverJustfileDescriptions(plan.RepoRoot))
 		runnerCfgPath := plan.RepoCfgPath
 		if runnerCfgPath == "" {
 			runnerCfgPath = filepath.Join(plan.RepoRoot, ".keg.yaml")

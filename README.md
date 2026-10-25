@@ -156,6 +156,10 @@ bin/keg clean --all
 Inside the sandbox, approved tasks can be delegated to the host runner:
 
 ```bash
+# List all whitelisted delegated tasks and raw commands with descriptions:
+bin/keg delegate --list
+bin/keg delegate --list --json
+
 # Transparently delegates 'test-playwright' to the host:
 bin/keg delegate test-playwright login.spec.ts 8080
 
@@ -305,15 +309,18 @@ ports:
 4. Security: The host exclusively binds `127.0.0.1`, never `0.0.0.0`; guest forwarder strictly dials declared targets (deny-by-default). Details and invariants: `CONCEPT.md` §4.9 and `THREAT_MODEL.md` §5.8.
 
 ```yaml
-# Whitelist for host delegation
+# Whitelist for host delegation (descriptions optional; falls back to justfile recipe comments)
 delegated_tasks:
   exact:
-    - build
+    - name: build
+      description: "Build artifacts on the host"
     - test
   prefixes:
-    - "test-playwright"
+    - name: "test-playwright"
+      description: "Run Playwright browser tests on the host"
   raw:
     - cmd: git
+      description: "Run local git operations on the host"
       subcommands: [status, diff, log, add, commit]
 ```
 

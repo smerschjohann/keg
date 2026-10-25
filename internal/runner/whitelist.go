@@ -41,6 +41,18 @@ type Decision struct {
 	Reason string
 }
 
+// TaskInfo describes one whitelisted task or raw command for listing and inspection.
+type TaskInfo struct {
+	Name                  string   `json:"name"`
+	Kind                  string   `json:"kind"` // "exact", "prefix", or "raw"
+	Description           string   `json:"description,omitempty"`
+	Subcommands           []string `json:"subcommands,omitempty"`
+	Flags                 []string `json:"flags,omitempty"`
+	OptsWithValue         []string `json:"opts_with_value,omitempty"`
+	AllowOptValueForm     bool     `json:"allow_opt_value_form,omitempty"`
+	ForbiddenArgsMatching []string `json:"forbidden_args_matching,omitempty"`
+}
+
 func deny(format string, args ...any) Decision {
 	return Decision{Reason: fmt.Sprintf(format, args...)}
 }
@@ -49,9 +61,12 @@ func deny(format string, args ...any) Decision {
 // the repo's delegated_tasks with the additive extra_* allowlists of the
 // user config (CONCEPT.md §5: extras union, nothing is taken away).
 type Engine struct {
-	exact    map[string]bool
-	prefixes map[string]bool
-	raw      []config.RawRule // deterministic order preserved for audits
+	exact        map[string]bool
+	exactOrder   []string
+	prefixes     map[string]bool
+	prefixOrder  []string
+	descriptions map[string]string
+	raw          []config.RawRule // deterministic order preserved for audits
 }
 
 // NewEngine validates and combines repo rules with user-config extras.
@@ -59,15 +74,32 @@ type Engine struct {
 // patterns are configuration errors (fail-closed before any launch).
 func NewEngine(tasks config.DelegatedTasks, extra config.RunnerCfg) (*Engine, error) {
 	e := &Engine{
-		exact:    map[string]bool{},
-		prefixes: map[string]bool{},
-		raw:      append(append([]config.RawRule{}, tasks.Raw...), extra.ExtraRaw...),
+		exact:        map[string]bool{},
+		prefixes:     map[string]bool{},
+		descriptions: map[string]string{},
+		raw:          append(append([]config.RawRule{}, tasks.Raw...), extra.ExtraRaw...),
 	}
 	for _, name := range append(append([]string{}, tasks.Exact...), extra.ExtraExact...) {
-		e.exact[name] = true
+		if !e.exact[name] {
+			e.exact[name] = true
+			e.exactOrder = append(e.exactOrder, name)
+		}
 	}
 	for _, name := range append(append([]string{}, tasks.Prefixes...), extra.ExtraPrefixes...) {
-		e.prefixes[name] = true
+		if !e.prefixes[name] {
+			e.prefixes[name] = true
+			e.prefixOrder = append(e.prefixOrder, name)
+		}
+	}
+	for k, v := range tasks.Descriptions {
+		if v != "" {
+			e.descriptions[k] = v
+		}
+	}
+	for k, v := range extra.Descriptions {
+		if v != "" {
+			e.descriptions[k] = v
+		}
 	}
 	for i, rule := range e.raw {
 		if len(rule.Subcommands) == 0 {
@@ -80,6 +112,63 @@ func NewEngine(tasks config.DelegatedTasks, extra config.RunnerCfg) (*Engine, er
 		}
 	}
 	return e, nil
+}
+
+// SetFallbackDescriptions populates descriptions (e.g. extracted from a justfile)
+// for any exact or prefix task that does not already have an explicit description
+// configured in .keg.yaml or user config.yaml.
+func (e *Engine) SetFallbackDescriptions(fallback map[string]string) {
+	if e == nil || len(fallback) == 0 {
+		return
+	}
+	if e.descriptions == nil {
+		e.descriptions = map[string]string{}
+	}
+	for k, v := range fallback {
+		if v != "" && e.descriptions[k] == "" {
+			e.descriptions[k] = v
+		}
+	}
+}
+
+// Rules returns all whitelisted exact tasks, prefix tasks, and raw rules in
+// deterministic order, including their descriptions and argument constraints.
+func (e *Engine) Rules() []TaskInfo {
+	if e == nil {
+		return nil
+	}
+	var out []TaskInfo
+	for _, name := range e.exactOrder {
+		out = append(out, TaskInfo{
+			Name:        name,
+			Kind:        "exact",
+			Description: e.descriptions[name],
+		})
+	}
+	for _, name := range e.prefixOrder {
+		out = append(out, TaskInfo{
+			Name:        name,
+			Kind:        "prefix",
+			Description: e.descriptions[name],
+		})
+	}
+	for _, rule := range e.raw {
+		desc := rule.Description
+		if desc == "" {
+			desc = e.descriptions[rule.Cmd]
+		}
+		out = append(out, TaskInfo{
+			Name:                  rule.Cmd,
+			Kind:                  "raw",
+			Description:           desc,
+			Subcommands:           append([]string(nil), rule.Subcommands...),
+			Flags:                 append([]string(nil), rule.Flags...),
+			OptsWithValue:         append([]string(nil), rule.OptsWithValue...),
+			AllowOptValueForm:     rule.AllowOptValueForm,
+			ForbiddenArgsMatching: append([]string(nil), rule.ForbiddenArgsMatching...),
+		})
+	}
+	return out
 }
 
 // Match decides whether argv may be delegated to the host. The first

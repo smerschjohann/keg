@@ -21,6 +21,10 @@ func MergeUsers(global, override *User) *User {
 	}
 	out.Runner.ExtraExact = union(global.Runner.ExtraExact, override.Runner.ExtraExact)
 	out.Runner.ExtraPrefixes = union(global.Runner.ExtraPrefixes, override.Runner.ExtraPrefixes)
+	out.Runner.ExtraRaw = append(slices.Clone(global.Runner.ExtraRaw), override.Runner.ExtraRaw...)
+	if len(global.Runner.Descriptions) > 0 || len(override.Runner.Descriptions) > 0 {
+		out.Runner.Descriptions = mergeStringMaps(global.Runner.Descriptions, override.Runner.Descriptions)
+	}
 	out.Vars = mergeStringMaps(global.Vars, override.Vars)
 	out.InjectNeeds = append(slices.Clone(global.InjectNeeds), override.InjectNeeds...)
 	out.Mounts = append(slices.Clone(global.Mounts), override.Mounts...)
@@ -195,7 +199,13 @@ func derefRunner(r *RunnerOverride) RunnerCfg {
 	if r == nil {
 		return RunnerCfg{}
 	}
-	return RunnerCfg{JustBin: r.JustBin, ExtraExact: r.ExtraExact, ExtraPrefixes: r.ExtraPrefixes, ExtraRaw: r.ExtraRaw}
+	return RunnerCfg{
+		JustBin:       r.JustBin,
+		ExtraExact:    r.ExtraExact,
+		ExtraPrefixes: r.ExtraPrefixes,
+		ExtraRaw:      r.ExtraRaw,
+		Descriptions:  r.Descriptions,
+	}
 }
 
 // globMatches reports whether pattern matches path. Unlike filepath.Match,

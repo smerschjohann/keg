@@ -240,6 +240,7 @@ type DNS struct {
 // RawRule is a delegation rule for real host binaries (CONCEPT.md §4.5).
 type RawRule struct {
 	Cmd                   string   `yaml:"cmd"`
+	Description           string   `yaml:"description,omitempty"`
 	Subcommands           []string `yaml:"subcommands"`
 	OptsWithValue         []string `yaml:"opts_with_value"`
 	Flags                 []string `yaml:"flags"`
@@ -249,9 +250,148 @@ type RawRule struct {
 
 // DelegatedTasks is the host-only task whitelist of the repo.
 type DelegatedTasks struct {
-	Exact    []string  `yaml:"exact"`
-	Prefixes []string  `yaml:"prefixes"`
-	Raw      []RawRule `yaml:"raw"`
+	Exact        []string          `yaml:"exact"`
+	Prefixes     []string          `yaml:"prefixes"`
+	Raw          []RawRule         `yaml:"raw"`
+	Descriptions map[string]string `yaml:"descriptions,omitempty"`
+}
+
+// UnmarshalYAML decodes delegated_tasks while allowing exact and prefixes entries
+// to be either plain strings or {name, description} mappings.
+func (d *DelegatedTasks) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("delegated_tasks must be a mapping")
+	}
+	descs := map[string]string{}
+	var explicitDescs map[string]string
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		val := value.Content[i+1]
+		switch key {
+		case "exact":
+			names, inlineDescs, err := decodeTaskEntries(val, "delegated_tasks.exact")
+			if err != nil {
+				return err
+			}
+			d.Exact = names
+			for k, v := range inlineDescs {
+				descs[k] = v
+			}
+		case "prefixes":
+			names, inlineDescs, err := decodeTaskEntries(val, "delegated_tasks.prefixes")
+			if err != nil {
+				return err
+			}
+			d.Prefixes = names
+			for k, v := range inlineDescs {
+				descs[k] = v
+			}
+		case "raw":
+			rules, err := decodeRawRules(val, "delegated_tasks.raw")
+			if err != nil {
+				return err
+			}
+			d.Raw = rules
+		case "descriptions":
+			if err := val.Decode(&explicitDescs); err != nil {
+				return fmt.Errorf("delegated_tasks.descriptions: %w", err)
+			}
+		default:
+			return fmt.Errorf("delegated_tasks: field %s not found in type config.DelegatedTasks", key)
+		}
+	}
+	for k, v := range explicitDescs {
+		descs[k] = v
+	}
+	if len(descs) > 0 {
+		d.Descriptions = descs
+	}
+	return nil
+}
+
+func decodeTaskEntries(node *yaml.Node, fieldPath string) ([]string, map[string]string, error) {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
+		return nil, nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, nil, fmt.Errorf("%s must be a sequence", fieldPath)
+	}
+	var names []string
+	descs := map[string]string{}
+	for idx, item := range node.Content {
+		switch item.Kind {
+		case yaml.ScalarNode:
+			name := strings.TrimSpace(item.Value)
+			if name == "" {
+				return nil, nil, fmt.Errorf("%s[%d]: task name must not be empty", fieldPath, idx)
+			}
+			names = append(names, item.Value)
+		case yaml.MappingNode:
+			var name, desc string
+			for j := 0; j < len(item.Content); j += 2 {
+				k := item.Content[j].Value
+				v := item.Content[j+1]
+				if v.Kind != yaml.ScalarNode {
+					return nil, nil, fmt.Errorf("%s[%d].%s must be a string", fieldPath, idx, k)
+				}
+				switch k {
+				case "name":
+					name = v.Value
+				case "description":
+					desc = v.Value
+				default:
+					return nil, nil, fmt.Errorf("%s[%d]: field %s not found in task entry", fieldPath, idx, k)
+				}
+			}
+			if strings.TrimSpace(name) == "" {
+				return nil, nil, fmt.Errorf("%s[%d]: task entry requires a non-empty 'name'", fieldPath, idx)
+			}
+			names = append(names, name)
+			if desc != "" {
+				descs[name] = desc
+			}
+		default:
+			return nil, nil, fmt.Errorf("%s[%d]: entry must be a string or {name, description} mapping", fieldPath, idx)
+		}
+	}
+	return names, descs, nil
+}
+
+var allowedRawRuleKeys = map[string]bool{
+	"cmd":                     true,
+	"description":             true,
+	"subcommands":             true,
+	"opts_with_value":         true,
+	"flags":                   true,
+	"allow_opt_value_form":    true,
+	"forbidden_args_matching": true,
+}
+
+func decodeRawRules(node *yaml.Node, fieldPath string) ([]RawRule, error) {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
+		return nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("%s must be a sequence", fieldPath)
+	}
+	var rules []RawRule
+	for idx, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("%s[%d] must be a mapping", fieldPath, idx)
+		}
+		for j := 0; j < len(item.Content); j += 2 {
+			k := item.Content[j].Value
+			if !allowedRawRuleKeys[k] {
+				return nil, fmt.Errorf("%s[%d]: field %s not found in type config.RawRule", fieldPath, idx, k)
+			}
+		}
+		var r RawRule
+		if err := item.Decode(&r); err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", fieldPath, idx, err)
+		}
+		rules = append(rules, r)
+	}
+	return rules, nil
 }
 
 // RepoPaths holds path extensions for the sandbox (repo config).
@@ -291,10 +431,17 @@ type Paths struct {
 
 // RunnerCfg holds delegation settings and local extra allowlists.
 type RunnerCfg struct {
-	JustBin       string    `yaml:"just_bin"`
-	ExtraExact    []string  `yaml:"extra_exact"`
-	ExtraPrefixes []string  `yaml:"extra_prefixes"`
-	ExtraRaw      []RawRule `yaml:"extra_raw"`
+	JustBin       string            `yaml:"just_bin"`
+	ExtraExact    []string          `yaml:"extra_exact"`
+	ExtraPrefixes []string          `yaml:"extra_prefixes"`
+	ExtraRaw      []RawRule         `yaml:"extra_raw"`
+	Descriptions  map[string]string `yaml:"descriptions,omitempty"`
+}
+
+// UnmarshalYAML decodes runner configuration while allowing extra_exact and
+// extra_prefixes entries to be plain strings or {name, description} mappings.
+func (r *RunnerCfg) UnmarshalYAML(value *yaml.Node) error {
+	return decodeRunnerNode(value, "runner", &r.JustBin, &r.ExtraExact, &r.ExtraPrefixes, &r.ExtraRaw, &r.Descriptions)
 }
 
 // TemplateEnv gates access to the host environment from repo templates.
@@ -353,10 +500,73 @@ type RepoOverride struct {
 
 // RunnerOverride carries only the additive allowlist parts.
 type RunnerOverride struct {
-	JustBin       string    `yaml:"just_bin"`
-	ExtraExact    []string  `yaml:"extra_exact"`
-	ExtraPrefixes []string  `yaml:"extra_prefixes"`
-	ExtraRaw      []RawRule `yaml:"extra_raw"`
+	JustBin       string            `yaml:"just_bin"`
+	ExtraExact    []string          `yaml:"extra_exact"`
+	ExtraPrefixes []string          `yaml:"extra_prefixes"`
+	ExtraRaw      []RawRule         `yaml:"extra_raw"`
+	Descriptions  map[string]string `yaml:"descriptions,omitempty"`
+}
+
+// UnmarshalYAML decodes per-repo runner overrides while allowing extra_exact and
+// extra_prefixes entries to be plain strings or {name, description} mappings.
+func (r *RunnerOverride) UnmarshalYAML(value *yaml.Node) error {
+	return decodeRunnerNode(value, "runner", &r.JustBin, &r.ExtraExact, &r.ExtraPrefixes, &r.ExtraRaw, &r.Descriptions)
+}
+
+func decodeRunnerNode(value *yaml.Node, fieldPath string, justBin *string, extraExact, extraPrefixes *[]string, extraRaw *[]RawRule, descriptions *map[string]string) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s must be a mapping", fieldPath)
+	}
+	descs := map[string]string{}
+	var explicitDescs map[string]string
+	for i := 0; i < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		val := value.Content[i+1]
+		switch key {
+		case "just_bin":
+			if val.Kind != yaml.ScalarNode {
+				return fmt.Errorf("%s.just_bin must be a string", fieldPath)
+			}
+			*justBin = val.Value
+		case "extra_exact":
+			names, inlineDescs, err := decodeTaskEntries(val, fieldPath+".extra_exact")
+			if err != nil {
+				return err
+			}
+			*extraExact = names
+			for k, v := range inlineDescs {
+				descs[k] = v
+			}
+		case "extra_prefixes":
+			names, inlineDescs, err := decodeTaskEntries(val, fieldPath+".extra_prefixes")
+			if err != nil {
+				return err
+			}
+			*extraPrefixes = names
+			for k, v := range inlineDescs {
+				descs[k] = v
+			}
+		case "extra_raw":
+			rules, err := decodeRawRules(val, fieldPath+".extra_raw")
+			if err != nil {
+				return err
+			}
+			*extraRaw = rules
+		case "descriptions":
+			if err := val.Decode(&explicitDescs); err != nil {
+				return fmt.Errorf("%s.descriptions: %w", fieldPath, err)
+			}
+		default:
+			return fmt.Errorf("%s: field %s not found in runner config", fieldPath, key)
+		}
+	}
+	for k, v := range explicitDescs {
+		descs[k] = v
+	}
+	if len(descs) > 0 {
+		*descriptions = descs
+	}
+	return nil
 }
 
 // User mirrors ~/.config/keg/config.yaml.

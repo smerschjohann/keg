@@ -341,3 +341,67 @@ func TestInvariant_DelegationDenyByDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestEngine_RulesAndDescriptions(t *testing.T) {
+	rawGit := gitRule()
+	rawGit.Description = "Run safe local git commands on the host"
+
+	engine, err := NewEngine(
+		config.DelegatedTasks{
+			Exact:    []string{"container-build", "clean-host"},
+			Prefixes: []string{"test-playwright"},
+			Descriptions: map[string]string{
+				"container-build": "Build container image via Podman",
+			},
+			Raw: []config.RawRule{rawGit},
+		},
+		config.RunnerCfg{
+			ExtraExact:    []string{"k8s-deploy"},
+			ExtraPrefixes: []string{"agy"},
+			Descriptions: map[string]string{
+				"k8s-deploy": "Deploy to local kind cluster",
+				"agy":        "Run agy CLI on host",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	// Provide fallback descriptions (e.g. from justfile) — should fill missing ones
+	// without overwriting explicit YAML descriptions.
+	engine.SetFallbackDescriptions(map[string]string{
+		"container-build": "Justfile comment that should not overwrite explicit YAML",
+		"clean-host":      "Clean temporary host build artifacts",
+		"test-playwright": "Run Playwright E2E suite on the host",
+	})
+
+	rules := engine.Rules()
+	if len(rules) != 6 {
+		t.Fatalf("len(rules) = %d, want 6: %+v", len(rules), rules)
+	}
+
+	byName := map[string]TaskInfo{}
+	for _, r := range rules {
+		byName[r.Name] = r
+	}
+
+	if got := byName["container-build"]; got.Kind != "exact" || got.Description != "Build container image via Podman" {
+		t.Errorf("container-build = %+v", got)
+	}
+	if got := byName["clean-host"]; got.Kind != "exact" || got.Description != "Clean temporary host build artifacts" {
+		t.Errorf("clean-host = %+v", got)
+	}
+	if got := byName["k8s-deploy"]; got.Kind != "exact" || got.Description != "Deploy to local kind cluster" {
+		t.Errorf("k8s-deploy = %+v", got)
+	}
+	if got := byName["test-playwright"]; got.Kind != "prefix" || got.Description != "Run Playwright E2E suite on the host" {
+		t.Errorf("test-playwright = %+v", got)
+	}
+	if got := byName["agy"]; got.Kind != "prefix" || got.Description != "Run agy CLI on host" {
+		t.Errorf("agy = %+v", got)
+	}
+	if got := byName["git"]; got.Kind != "raw" || got.Description != "Run safe local git commands on the host" || len(got.Subcommands) == 0 {
+		t.Errorf("git = %+v", got)
+	}
+}

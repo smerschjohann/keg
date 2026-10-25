@@ -14,6 +14,7 @@ const (
 	EventExit   = "exit"   // final: job exit code
 	EventDenied = "denied" // final: whitelist rejection (client exits 126)
 	EventError  = "error"  // final: protocol/execution failure (client exits 125)
+	EventList   = "list"   // final: whitelisted task list response
 )
 
 // Exit codes of the delegate client (AGENTS.md §5, bestand-compatible).
@@ -28,8 +29,9 @@ const (
 // characters survive JSON verbatim (THREAT_MODEL §5.4: parameters are
 // structured data, never shell input).
 type JobRequest struct {
-	ArgvB64 []string `json:"argv_b64"`
-	Dir     string   `json:"dir,omitempty"` // subdir under the repo root (path jail)
+	ArgvB64 []string `json:"argv_b64,omitempty"`
+	Dir     string   `json:"dir,omitempty"`  // subdir under the repo root (path jail)
+	List    bool     `json:"list,omitempty"` // query whitelisted tasks instead of executing a job
 }
 
 // EncodeRequest serializes a request to its wire form.
@@ -75,8 +77,9 @@ func DecodeStrings(in []string) []string {
 
 // Event is one streamed response frame.
 type Event struct {
-	Type    string `json:"type"`
-	Data    string `json:"data,omitempty"`    // b64 chunk (stdout/stderr)
-	Code    int    `json:"code,omitempty"`    // job exit code (exit)
-	Message string `json:"message,omitempty"` // denial reason / error text
+	Type    string     `json:"type"`
+	Data    string     `json:"data,omitempty"`    // b64 chunk (stdout/stderr)
+	Code    int        `json:"code,omitempty"`    // job exit code (exit)
+	Message string     `json:"message,omitempty"` // denial reason / error text
+	Tasks   []TaskInfo `json:"tasks,omitempty"`   // whitelisted tasks (list)
 }

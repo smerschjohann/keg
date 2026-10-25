@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 
 	"github.com/smerschjohann/keg/internal/frame"
 )
@@ -79,4 +80,97 @@ func Dial() (net.Conn, error) {
 		return nil, fmt.Errorf("runner socket %s: %w", SocketPath, err)
 	}
 	return conn, nil
+}
+
+// List queries the host runner over conn for the effective whitelisted tasks
+// and their descriptions.
+func List(conn io.ReadWriteCloser) ([]TaskInfo, error) {
+	defer func() { _ = conn.Close() }()
+
+	if err := frame.WriteFrame(conn, EncodeRequest(JobRequest{List: true})); err != nil {
+		return nil, fmt.Errorf("send list request: %w", err)
+	}
+	payload, err := frame.ReadFrame(conn)
+	if err != nil {
+		return nil, fmt.Errorf("read list response: %w", err)
+	}
+	var ev Event
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return nil, fmt.Errorf("decode list response: %w", err)
+	}
+	switch ev.Type {
+	case EventList:
+		return ev.Tasks, nil
+	case EventError:
+		return nil, fmt.Errorf("%s", ev.Message)
+	default:
+		return nil, fmt.Errorf("unexpected event type %q", ev.Type)
+	}
+}
+
+// FormatTaskList renders whitelisted tasks and raw rules in a readable table
+// for humans and AI agents.
+func FormatTaskList(tasks []TaskInfo) string {
+	if len(tasks) == 0 {
+		return "No delegated tasks configured.\n"
+	}
+
+	type row struct {
+		usage string
+		kind  string
+		info  TaskInfo
+	}
+	rows := make([]row, 0, len(tasks))
+	maxUsage := 0
+	maxKind := 0
+	for _, t := range tasks {
+		var usage string
+		switch t.Kind {
+		case "prefix":
+			usage = t.Name + " [args…]"
+		case "raw":
+			usage = t.Name + " <subcommand> [args…]"
+		default:
+			usage = t.Name
+		}
+		kindTag := "[" + t.Kind + "]"
+		if len(usage) > maxUsage {
+			maxUsage = len(usage)
+		}
+		if len(kindTag) > maxKind {
+			maxKind = len(kindTag)
+		}
+		rows = append(rows, row{usage: usage, kind: kindTag, info: t})
+	}
+
+	var b strings.Builder
+	b.WriteString("Allowed delegated tasks (run via 'keg delegate <task> [args...]' or 'just delegate <task> [args...]'):\n\n")
+	for _, r := range rows {
+		if r.info.Description != "" {
+			fmt.Fprintf(&b, "  %-*s  %-*s  %s\n", maxUsage, r.usage, maxKind, r.kind, r.info.Description)
+		} else {
+			fmt.Fprintf(&b, "  %-*s  %s\n", maxUsage, r.usage, r.kind)
+		}
+		if r.info.Kind == "raw" {
+			if len(r.info.Subcommands) > 0 {
+				fmt.Fprintf(&b, "    subcommands: %s\n", strings.Join(r.info.Subcommands, ", "))
+			}
+			var opts []string
+			for _, o := range r.info.OptsWithValue {
+				opts = append(opts, o+" <val>")
+			}
+			opts = append(opts, r.info.Flags...)
+			if len(opts) > 0 {
+				suffix := ""
+				if r.info.AllowOptValueForm {
+					suffix = " (--opt=val allowed)"
+				}
+				fmt.Fprintf(&b, "    options:     %s%s\n", strings.Join(opts, ", "), suffix)
+			}
+			if len(r.info.ForbiddenArgsMatching) > 0 {
+				fmt.Fprintf(&b, "    forbidden:   %s\n", strings.Join(r.info.ForbiddenArgsMatching, ", "))
+			}
+		}
+	}
+	return b.String()
 }

@@ -491,3 +491,38 @@ func TestMergeEnv_CliBeatsAll(t *testing.T) {
 		t.Errorf("got.Set[VAR] = %q, want cli", got.Set["VAR"])
 	}
 }
+
+func TestMergeUsers_RunnerDescriptionsAndExtraRaw(t *testing.T) {
+	base := userFromYAML(t, `
+runner:
+  extra_exact:
+    - name: task-a
+      description: "Global description A"
+  extra_raw:
+    - cmd: git
+      description: "Global git"
+      subcommands: [status]
+repos:
+  "/repo":
+    runner:
+      extra_exact:
+        - name: task-b
+          description: "Override description B"
+      descriptions:
+        task-a: "Overridden description A"
+      extra_raw:
+        - cmd: podman
+          description: "Override podman"
+          subcommands: [images]
+`)
+	got := MatchRepo(base, "/repo")
+	if got.Runner.Descriptions["task-a"] != "Overridden description A" {
+		t.Errorf("Descriptions[task-a] = %q, want overridden", got.Runner.Descriptions["task-a"])
+	}
+	if got.Runner.Descriptions["task-b"] != "Override description B" {
+		t.Errorf("Descriptions[task-b] = %q, want Override description B", got.Runner.Descriptions["task-b"])
+	}
+	if len(got.Runner.ExtraRaw) != 2 {
+		t.Fatalf("len(ExtraRaw) = %d, want 2", len(got.Runner.ExtraRaw))
+	}
+}

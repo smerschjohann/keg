@@ -77,7 +77,19 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 		return // client vanished before completing its request
 	}
 	req, err := DecodeRequest(payload)
-	if err != nil || len(req.ArgvB64) == 0 {
+	if err != nil {
+		writeEvent(conn, Event{Type: EventError, Message: "malformed job request"})
+		return
+	}
+	if req.List {
+		var tasks []TaskInfo
+		if cfg.Engine != nil {
+			tasks = cfg.Engine.Rules()
+		}
+		writeEvent(conn, Event{Type: EventList, Tasks: tasks})
+		return
+	}
+	if len(req.ArgvB64) == 0 {
 		writeEvent(conn, Event{Type: EventError, Message: "malformed job request"})
 		return
 	}

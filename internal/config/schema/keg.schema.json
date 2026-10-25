@@ -311,6 +311,29 @@
         }
       }
     },
+    "TaskEntry": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Task name."
+        },
+        {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Task name."
+            },
+            "description": {
+              "type": "string",
+              "description": "Human-readable description of the delegated task."
+            }
+          }
+        }
+      ]
+    },
     "DelegatedTasks": {
       "type": "object",
       "additionalProperties": false,
@@ -318,16 +341,23 @@
         "exact": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/TaskEntry"
           },
-          "description": "Exact task names allowed to run on host without arguments."
+          "description": "Exact task names allowed to run on host without arguments (string or {name, description})."
         },
         "prefixes": {
           "type": "array",
           "items": {
+            "$ref": "#/definitions/TaskEntry"
+          },
+          "description": "Task name prefixes allowed to run on host with arguments (string or {name, description})."
+        },
+        "descriptions": {
+          "type": "object",
+          "additionalProperties": {
             "type": "string"
           },
-          "description": "Task name prefixes allowed to run on host with arguments."
+          "description": "Optional map of task descriptions keyed by task name."
         },
         "raw": {
           "type": "array",
@@ -346,6 +376,10 @@
         "cmd": {
           "type": "string",
           "description": "Host command name (e.g. 'git', 'podman')."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable description of the allowed raw command rule."
         },
         "subcommands": {
           "type": "array",

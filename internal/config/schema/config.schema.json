@@ -131,6 +131,29 @@
         }
       }
     },
+    "TaskEntry": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Task name."
+        },
+        {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Task name."
+            },
+            "description": {
+              "type": "string",
+              "description": "Human-readable description of the delegated task."
+            }
+          }
+        }
+      ]
+    },
     "RunnerCfg": {
       "type": "object",
       "additionalProperties": false,
@@ -142,16 +165,23 @@
         "extra_exact": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/TaskEntry"
           },
-          "description": "Additional exact task names allowed globally on this machine."
+          "description": "Additional exact task names allowed globally on this machine (string or {name, description})."
         },
         "extra_prefixes": {
           "type": "array",
           "items": {
+            "$ref": "#/definitions/TaskEntry"
+          },
+          "description": "Additional task prefixes allowed globally on this machine (string or {name, description})."
+        },
+        "descriptions": {
+          "type": "object",
+          "additionalProperties": {
             "type": "string"
           },
-          "description": "Additional task prefixes allowed globally on this machine."
+          "description": "Optional map of task descriptions keyed by task name."
         },
         "extra_raw": {
           "type": "array",
@@ -173,16 +203,23 @@
         "extra_exact": {
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/TaskEntry"
           },
-          "description": "Additional exact task names for matched repositories."
+          "description": "Additional exact task names for matched repositories (string or {name, description})."
         },
         "extra_prefixes": {
           "type": "array",
           "items": {
+            "$ref": "#/definitions/TaskEntry"
+          },
+          "description": "Additional task prefixes for matched repositories (string or {name, description})."
+        },
+        "descriptions": {
+          "type": "object",
+          "additionalProperties": {
             "type": "string"
           },
-          "description": "Additional task prefixes for matched repositories."
+          "description": "Optional map of task descriptions keyed by task name."
         },
         "extra_raw": {
           "type": "array",
@@ -444,6 +481,10 @@
         "cmd": {
           "type": "string",
           "description": "Host command name (e.g. 'git', 'podman')."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable description of the allowed raw command rule."
         },
         "subcommands": {
           "type": "array",

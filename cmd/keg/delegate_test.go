@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -118,4 +120,151 @@ func TestCLI_DelegateCommandExists(t *testing.T) {
 		}
 	}
 	t.Fatal("command \"delegate\" not found")
+}
+
+func TestDelegateList_ViaRunnerSocket(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "runner.sock")
+	prev := runner.SocketPath
+	runner.SocketPath = sockPath
+	t.Cleanup(func() { runner.SocketPath = prev })
+
+	repo := t.TempDir()
+	justContent := `
+# Build the container image on the host
+container-build:
+	podman build .
+
+# Run Playwright E2E tests
+test-playwright *args:
+	npx playwright test "$@"
+`
+	if err := os.WriteFile(filepath.Join(repo, "justfile"), []byte(justContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	engine, err := runner.NewEngine(
+		config.DelegatedTasks{
+			Exact:    []string{"container-build"},
+			Prefixes: []string{"test-playwright"},
+			Raw: []config.RawRule{{
+				Cmd:         "git",
+				Description: "Run safe local git commands",
+				Subcommands: []string{"status", "diff"},
+			}},
+		},
+		config.RunnerCfg{
+			ExtraExact: []string{"host-extra"},
+			Descriptions: map[string]string{
+				"host-extra": "Extra host task from user config",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	engine.SetFallbackDescriptions(config.DiscoverJustfileDescriptions(repo))
+
+	fakeRunnerDaemon(t, sockPath, runner.ServerConfig{
+		Engine:   engine,
+		RepoRoot: repo,
+	})
+
+	var out, errBuf bytes.Buffer
+	code := delegateActionWithIO([]string{"--list"}, "", "", "", &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("delegateActionWithIO(--list) = %d, want 0 (stderr: %s)", code, errBuf.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"container-build",
+		"Build the container image on the host",
+		"test-playwright",
+		"Run Playwright E2E tests",
+		"host-extra",
+		"Extra host task from user config",
+		"git",
+		"Run safe local git commands",
+		"status, diff",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("--list output missing %q:\n%s", want, got)
+		}
+	}
+
+	// Also verify --json output
+	out.Reset()
+	errBuf.Reset()
+	code = delegateActionWithIO([]string{"--list", "--json"}, "", "", "", &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("delegateActionWithIO(--list --json) = %d, want 0 (stderr: %s)", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), `"name": "container-build"`) {
+		t.Errorf("--list --json output missing JSON task entry:\n%s", out.String())
+	}
+}
+
+func TestDelegateList_HostFallbackWithoutSocket(t *testing.T) {
+	// Point SocketPath at a non-existent socket so delegate --list falls back to host config loading.
+	prev := runner.SocketPath
+	runner.SocketPath = filepath.Join(t.TempDir(), "absent.sock")
+	t.Cleanup(func() { runner.SocketPath = prev })
+
+	repo := t.TempDir()
+	repoYAML := `version: "1"
+delegated_tasks:
+  exact:
+    - name: container-build
+      description: "YAML description for container-build"
+    - from-justfile
+  raw:
+    - cmd: git
+      description: "Git on host"
+      subcommands: [status]
+`
+	if err := os.WriteFile(filepath.Join(repo, ".keg.yaml"), []byte(repoYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	justContent := `
+# Comment from justfile for container-build
+container-build:
+	echo build
+
+# Description extracted from justfile
+from-justfile:
+	echo just
+`
+	if err := os.WriteFile(filepath.Join(repo, "justfile"), []byte(justContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	userCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	userYAML := `runner:
+  extra_prefixes:
+    - name: agy
+      description: "Run agy on host"
+`
+	if err := os.WriteFile(userCfgPath, []byte(userYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errBuf bytes.Buffer
+	code := delegateActionWithIO([]string{"--list"}, repo, "", userCfgPath, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("host fallback --list code = %d, want 0 (stderr: %s)", code, errBuf.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"container-build",
+		"YAML description for container-build",
+		"from-justfile",
+		"Description extracted from justfile",
+		"agy",
+		"Run agy on host",
+		"git",
+		"Git on host",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("host fallback --list output missing %q:\n%s", want, got)
+		}
+	}
 }

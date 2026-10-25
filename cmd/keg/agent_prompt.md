@@ -127,13 +127,18 @@ network:
       db.local.test: "127.0.0.1"
 
 # Whitelist of tasks allowed to execute on the host
+# Descriptions can be provided inline ({name, description}), via a descriptions map,
+# on raw rules, or automatically extracted from justfile recipe comments.
 delegated_tasks:
   exact:
-    - container-build
+    - name: container-build
+      description: "Build container image with Podman on the host"
   prefixes:
-    - test-playwright
+    - name: test-playwright
+      description: "Run Playwright browser E2E tests on the host"
   raw:
     - cmd: git
+      description: "Run safe local git commands on the host"
       # here we typically don't want to have push rights.
       subcommands: [add, branch, checkout, commit, diff, fetch, log, merge, rebase, reset, show, stash, status, switch]
       opts_with_value: ["-c", "-C", "--git-dir", "--work-tree"]
@@ -228,6 +233,7 @@ security:
 * `keg agent schema repo` — Query JSON schema for `.keg.yaml`.
 * `keg agent schema user` — Query JSON schema for user `config.yaml`.
 * `keg agent sandbox-just` — Output `sandbox.just` delegation helper snippet.
+* `keg delegate --list` (or `just delegate --list`) — List all whitelisted host tasks and raw commands with descriptions (supports `--json`).
 * `keg run` — Start interactive sandbox.
 * `keg run --ephemeral -- just test` — Run tests in throwaway tmpfs overlay.
 * `keg run --disk-overlay <name>` — Run in persistent diff-able on-disk layer.

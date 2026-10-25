@@ -1111,3 +1111,137 @@ func TestParseUser_PathsPrependAppend_RejectsEmpty(t *testing.T) {
 		}
 	})
 }
+
+func TestParseRepo_DelegatedTaskDescriptions(t *testing.T) {
+	yamlText := `
+version: "1"
+delegated_tasks:
+  exact:
+    - name: container-build
+      description: "Build container image on the host"
+    - plain-task
+  prefixes:
+    - name: test-playwright
+      description: "Run Playwright browser tests on the host"
+    - plain-prefix
+  descriptions:
+    plain-task: "Explicit map description for plain-task"
+  raw:
+    - cmd: git
+      description: "Run safe local git commands on the host"
+      subcommands: [status, diff, add, commit]
+`
+	repo, err := ParseRepo([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseRepo() error = %v", err)
+	}
+	wantExact := []string{"container-build", "plain-task"}
+	if len(repo.DelegatedTasks.Exact) != len(wantExact) || repo.DelegatedTasks.Exact[0] != "container-build" || repo.DelegatedTasks.Exact[1] != "plain-task" {
+		t.Errorf("Exact = %v, want %v", repo.DelegatedTasks.Exact, wantExact)
+	}
+	wantPrefixes := []string{"test-playwright", "plain-prefix"}
+	if len(repo.DelegatedTasks.Prefixes) != len(wantPrefixes) || repo.DelegatedTasks.Prefixes[0] != "test-playwright" || repo.DelegatedTasks.Prefixes[1] != "plain-prefix" {
+		t.Errorf("Prefixes = %v, want %v", repo.DelegatedTasks.Prefixes, wantPrefixes)
+	}
+	if got := repo.DelegatedTasks.Descriptions["container-build"]; got != "Build container image on the host" {
+		t.Errorf("Descriptions[container-build] = %q", got)
+	}
+	if got := repo.DelegatedTasks.Descriptions["test-playwright"]; got != "Run Playwright browser tests on the host" {
+		t.Errorf("Descriptions[test-playwright] = %q", got)
+	}
+	if got := repo.DelegatedTasks.Descriptions["plain-task"]; got != "Explicit map description for plain-task" {
+		t.Errorf("Descriptions[plain-task] = %q", got)
+	}
+	if len(repo.DelegatedTasks.Raw) != 1 || repo.DelegatedTasks.Raw[0].Description != "Run safe local git commands on the host" {
+		t.Errorf("Raw[0].Description = %q", repo.DelegatedTasks.Raw[0].Description)
+	}
+}
+
+func TestParseRepo_DelegatedTaskDescriptions_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		yamlText string
+		wantErr  string
+	}{
+		{
+			name: "empty name in exact mapping",
+			yamlText: `version: "1"
+delegated_tasks:
+  exact:
+    - description: "missing name"
+`,
+			wantErr: "name",
+		},
+		{
+			name: "unknown field in exact mapping",
+			yamlText: `version: "1"
+delegated_tasks:
+  exact:
+    - name: build
+      unknown_field: foo
+`,
+			wantErr: "unknown_field",
+		},
+		{
+			name: "unknown field in delegated_tasks",
+			yamlText: `version: "1"
+delegated_tasks:
+  unknown_section: [a]
+`,
+			wantErr: "unknown_section",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseRepo([]byte(tt.yamlText))
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.wantErr)) {
+				t.Errorf("ParseRepo() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseUser_RunnerDescriptions(t *testing.T) {
+	yamlText := `
+runner:
+  extra_exact:
+    - name: host-lint
+      description: "Run host linter"
+    - plain-extra
+  extra_prefixes:
+    - name: agy
+      description: "Run agy CLI on the host"
+  descriptions:
+    plain-extra: "Plain extra description"
+  extra_raw:
+    - cmd: podman
+      description: "Run podman container operations"
+      subcommands: [build, images]
+repos:
+  "~/work/*":
+    runner:
+      extra_exact:
+        - name: k8s-deploy
+          description: "Deploy to dev cluster"
+`
+	user, err := ParseUser([]byte(yamlText))
+	if err != nil {
+		t.Fatalf("ParseUser() error = %v", err)
+	}
+	if got := user.Runner.Descriptions["host-lint"]; got != "Run host linter" {
+		t.Errorf("user.Runner.Descriptions[host-lint] = %q", got)
+	}
+	if got := user.Runner.Descriptions["agy"]; got != "Run agy CLI on the host" {
+		t.Errorf("user.Runner.Descriptions[agy] = %q", got)
+	}
+	if got := user.Runner.Descriptions["plain-extra"]; got != "Plain extra description" {
+		t.Errorf("user.Runner.Descriptions[plain-extra] = %q", got)
+	}
+	if len(user.Runner.ExtraRaw) != 1 || user.Runner.ExtraRaw[0].Description != "Run podman container operations" {
+		t.Errorf("user.Runner.ExtraRaw[0].Description = %q", user.Runner.ExtraRaw[0].Description)
+	}
+	repoOver := user.Repos["~/work/*"]
+	if repoOver.Runner == nil || repoOver.Runner.Descriptions["k8s-deploy"] != "Deploy to dev cluster" {
+		t.Errorf("repo override runner descriptions = %v", repoOver.Runner)
+	}
+}

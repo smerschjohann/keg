@@ -873,20 +873,26 @@ network:
       "*.svc.local.test": "127.0.0.1"
       "*.githubusercontent.com": "10.0.0.7"
 
-# Host-only Tasks, die aus der Sandbox heraus per `just delegate` nutzbar sind
+# Host-only Tasks, die aus der Sandbox heraus per `just delegate` nutzbar sind.
+# Einträge in exact/prefixes unterstützen einfache Strings oder {name, description}-Mappings;
+# fehlt eine explizite Beschreibung in YAML, liest keg automatisch den Rezept-Kommentar aus dem justfile.
+# Abfrage aller effektiv freigegebenen Befehle (inkl. User-Config extra_*): `keg delegate --list` [--json].
 delegated_tasks:
   exact:
-    - container-build
+    - name: container-build
+      description: "Container-Image mit Podman auf dem Host bauen"
     - container-push
     - test-integration-podman
   prefixes:
-    - test-playwright
+    - name: test-playwright
+      description: "Playwright-Browser-Tests auf dem Host ausführen"
     - install-playwright
   # Raw-Commands: werden NICHT mit `just` gewrappt, sondern direkt auf dem
   # Host ausgeführt (nötig für Git in Linked Worktrees u. Ä.). Matching über
   # das Argument-Pattern-System aus Abschnitt 4.5.
   raw:
     - cmd: git
+      description: "Lokale Git-Operationen auf dem Host ausführen"
       subcommands:            # erstes Nicht-Options-Argument muss hierdrin sein
         - add
         - branch

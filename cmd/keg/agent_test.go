@@ -35,6 +35,7 @@ func TestCLI_AgentPrompt(t *testing.T) {
 			"import 'sandbox.just'",
 			"paths.prepend",
 			"Maven",
+			"keg delegate --list",
 		} {
 			if !strings.Contains(output, want) {
 				t.Errorf("agent prompt missing expected text %q", want)

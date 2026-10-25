@@ -206,3 +206,84 @@ TAG := "v1"
 		})
 	}
 }
+
+func TestParseJustfileDescriptions(t *testing.T) {
+	content := `
+import 'sandbox.just'
+
+set positional-arguments := true
+in_sandbox := "1"
+
+# Build the application binary
+build:
+	go build ./...
+
+# ── Delegated Tasks (Host-only, e.g. Playwright, Podman) ───────
+# Run Playwright browser E2E tests on the host
+test-playwright test_file="" port="8080":
+	just delegate test-playwright "{{test_file}}" "{{port}}"
+
+# Orphan comment separated by blank line
+
+undocumented-task:
+	echo hi
+
+# Comment before attribute
+[private]
+internal-task:
+	echo internal
+
+[doc('Explicit doc attribute wins')]
+# Fallback comment
+attr-doc-task:
+	echo doc
+
+#Quiet recipe with @ prefix
+@quiet-task arg1:
+	echo {{arg1}}
+`
+	got := ParseJustfileDescriptions(content)
+	want := map[string]string{
+		"build":           "Build the application binary",
+		"test-playwright": "Run Playwright browser E2E tests on the host",
+		"internal-task":   "Comment before attribute",
+		"attr-doc-task":   "Explicit doc attribute wins",
+		"quiet-task":      "Quiet recipe with @ prefix",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseJustfileDescriptions() =\n  %#v\nwant:\n  %#v", got, want)
+	}
+}
+
+func TestDiscoverJustfileDescriptions_WithImports(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "ci"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	rootJust := `
+import 'ci/tasks.just'
+
+# Root build recipe
+container-build:
+	podman build .
+`
+	importedJust := `
+# Imported playwright test runner
+test-playwright *args:
+	npx playwright test "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "justfile"), []byte(rootJust), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ci", "tasks.just"), []byte(importedJust), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := DiscoverJustfileDescriptions(dir)
+	if got["container-build"] != "Root build recipe" {
+		t.Errorf("got[container-build] = %q, want %q", got["container-build"], "Root build recipe")
+	}
+	if got["test-playwright"] != "Imported playwright test runner" {
+		t.Errorf("got[test-playwright] = %q, want %q", got["test-playwright"], "Imported playwright test runner")
+	}
+}
