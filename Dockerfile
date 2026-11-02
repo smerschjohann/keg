@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 #
 # Two image targets:
 #
@@ -28,7 +28,7 @@ LABEL org.opencontainers.image.title="keg" \
 ENTRYPOINT ["/keg"]
 CMD ["--help"]
 
-FROM debian:trixie-slim AS runtime
+FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS runtime
 ARG TARGETARCH
 ARG VERSION=dev
 
