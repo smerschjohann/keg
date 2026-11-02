@@ -76,6 +76,66 @@ bwrap --version
 make build          # -> bin/keg
 ```
 
+### Prebuilt binaries
+
+Every `v*` tag publishes static Linux binaries for `amd64` and `arm64`
+(`keg_<version>_linux_<arch>.tar.gz`) together with `checksums.txt`:
+
+```bash
+VERSION=v0.1.0
+BASE=https://github.com/smerschjohann/keg/releases/download/$VERSION
+curl -LO "$BASE/keg_${VERSION}_linux_amd64.tar.gz"
+curl -LO "$BASE/checksums.txt"
+sha256sum --check --ignore-missing checksums.txt
+tar -xzf "keg_${VERSION}_linux_amd64.tar.gz"
+sudo install -m 0755 keg /usr/local/bin/keg
+keg --version
+```
+
+The binaries are built with `CGO_ENABLED=0` and `-trimpath`: statically linked
+and free of build-host paths. Their build provenance is attested by the release
+workflow:
+
+```bash
+gh attestation verify "keg_${VERSION}_linux_amd64.tar.gz" --repo smerschjohann/keg
+```
+
+### Container images
+
+Releases publish two multi-arch (`amd64`, `arm64`) images to GitHub Container
+Registry:
+
+| Tag | Contents | Purpose |
+|---|---|---|
+| `:<version>`, `:latest` | `FROM scratch`: only the statically linked `keg` binary (~11.6 MB) | binary transport (`docker cp`, CI base images); **cannot** run sandboxes (no `bwrap`, no userland) |
+| `:<version>-runtime`, `:latest-runtime` | `debian:trixie-slim` + `bubblewrap` ≥ 0.11, `unshare`, `ip`, `nft`, CA bundle + `keg` (~105 MB) | running `keg` and sandboxes in a container |
+
+```bash
+docker run --rm ghcr.io/smerschjohann/keg:v0.1.0 --version
+docker run --rm ghcr.io/smerschjohann/keg:v0.1.0-runtime --version
+docker run --rm --entrypoint bwrap \
+  ghcr.io/smerschjohann/keg:v0.1.0-runtime --version
+docker run --rm --entrypoint unshare \
+  ghcr.io/smerschjohann/keg:v0.1.0-runtime --version
+```
+
+Sandbox run inside the runtime image (see
+[`docs/container-requirements.md`](docs/container-requirements.md); rootless /
+Podman setups may need `--privileged`):
+
+```bash
+docker run --rm -it --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
+  -v "$PWD:/workspace" -w /workspace \
+  ghcr.io/smerschjohann/keg:v0.1.0-runtime run -- bash
+```
+
+Both images carry build provenance:
+
+```bash
+gh attestation verify oci://ghcr.io/smerschjohann/keg:v0.1.0 --repo smerschjohann/keg
+gh attestation verify oci://ghcr.io/smerschjohann/keg:v0.1.0-runtime --repo smerschjohann/keg
+```
+
 ### Commands
 
 #### 1. Starting a Sandbox (`keg run`)
@@ -411,6 +471,30 @@ make lint            # golangci-lint (must pass with 0 warnings)
 make test            # all unit tests with -race
 make integration     # bwrap integration tests (tag: integration)
 make tidy            # go mod tidy (must remain diff-free)
+make release         # -> dist/keg_<version>_linux_{amd64,arm64}.tar.gz + checksums.txt
+make image           # -> binary-only image (keg:dev, IMAGE=...)
+make image-runtime   # -> runtime image with bwrap/unshare (keg:runtime-dev)
+```
+
+### Dependency updates
+
+[Renovate](renovate.json) keeps Go modules, the Go toolchain, container base
+images and GitHub Actions current (weekly PRs, grouped per manager; `go mod
+tidy` runs after Go updates). All actions are pinned to commit SHAs with a
+`# vX.Y.Z` comment — Renovate's `helpers:pinGitHubActionDigestsToSemver` keeps
+digest and comment in sync, so a compromised moving tag cannot inject code.
+Renovate itself runs as the Renovate GitHub App installed on the repository.
+
+### Releasing
+
+Pushing a semver tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml):
+verify (module tidiness, lint, vet, unit tests) → build matrix `amd64`/`arm64`
+→ build provenance attestations and the multi-arch `ghcr.io/<owner>/keg` image
+→ GitHub release with the tarballs, `checksums.txt` and generated release notes.
+
+```bash
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
 ```
 
 ---
