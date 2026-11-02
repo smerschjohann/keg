@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -606,5 +607,80 @@ func TestServer_ListRequestReturnsWhitelistedTasks(t *testing.T) {
 	}
 	if tasks[1].Name != "git" || tasks[1].Kind != "raw" {
 		t.Errorf("tasks[1] = %+v", tasks[1])
+	}
+}
+
+// TestServer_ConcurrentStdoutStderrStayFramed reproduces the interleaving of
+// frame writes: stdout, stderr and status events are produced by different
+// goroutines, and frame.WriteFrame issues a header and a payload write. Without
+// a shared lock those writes can interleave and corrupt the stream.
+func TestServer_ConcurrentStdoutStderrStayFramed(t *testing.T) {
+	const lines = 200
+	script := writeScript(t, "just", fmt.Sprintf(`
+i=0
+while [ $i -lt %d ]; do
+  echo "out-$i"
+  echo "err-$i" >&2
+  i=$((i+1))
+done
+`, lines))
+
+	cfg := ServerConfig{Engine: baseEngine(t), JustBin: script, RepoRoot: t.TempDir()}
+	client, server := pipeSessions(t)
+	go func() { _ = ServeSession(server, cfg) }()
+
+	var wantOut, wantErr strings.Builder
+	for i := 0; i < lines; i++ {
+		fmt.Fprintf(&wantOut, "out-%d\n", i)
+		fmt.Fprintf(&wantErr, "err-%d\n", i)
+	}
+
+	for round := 0; round < 3; round++ {
+		stream := openStream(t, client)
+		if _, err := stream.Write(mustFrame(encodeReq([]string{"test-playwright", "x"}, ""))); err != nil {
+			t.Fatalf("round %d: send request: %v", round, err)
+		}
+
+		var gotOut, gotErr strings.Builder
+		exit := -1
+		for {
+			payload, err := frame.ReadFrame(stream)
+			if err != nil {
+				break
+			}
+			var ev Event
+			if err := json.Unmarshal(payload, &ev); err != nil {
+				end := len(payload)
+				if end > 48 {
+					end = 48
+				}
+				t.Fatalf("round %d: event unmarshal: %v (payload hex %x)", round, err, payload[:end])
+			}
+			switch ev.Type {
+			case EventStdout, EventStderr:
+				data, decErr := base64.StdEncoding.DecodeString(ev.Data)
+				if decErr != nil {
+					t.Fatalf("round %d: decode %s: %v", round, ev.Type, decErr)
+				}
+				if ev.Type == EventStdout {
+					gotOut.Write(data)
+				} else {
+					gotErr.Write(data)
+				}
+			case EventExit:
+				exit = ev.Code
+			}
+		}
+		_ = stream.Close()
+
+		if gotOut.String() != wantOut.String() {
+			t.Fatalf("round %d: stdout corrupted: got %d bytes, want %d", round, gotOut.Len(), wantOut.Len())
+		}
+		if gotErr.String() != wantErr.String() {
+			t.Fatalf("round %d: stderr corrupted: got %d bytes, want %d", round, gotErr.Len(), wantErr.Len())
+		}
+		if exit != 0 {
+			t.Fatalf("round %d: exit code = %d, want 0", round, exit)
+		}
 	}
 }

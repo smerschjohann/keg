@@ -72,13 +72,18 @@ func ServeSessionCtx(ctx context.Context, sess muxado.Session, cfg ServerConfig)
 func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 	defer func() { _ = conn.Close() }()
 
+	// stdout, stderr and status events come from different goroutines and
+	// frame.WriteFrame writes header and payload separately: every frame
+	// must pass through one shared lock or the stream interleaves.
+	out := &lockedWriter{w: conn}
+
 	payload, err := frame.ReadFrame(conn)
 	if err != nil {
 		return // client vanished before completing its request
 	}
 	req, err := DecodeRequest(payload)
 	if err != nil {
-		writeEvent(conn, Event{Type: EventError, Message: "malformed job request"})
+		writeEvent(out, Event{Type: EventError, Message: "malformed job request"})
 		return
 	}
 	if req.List {
@@ -86,11 +91,11 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 		if cfg.Engine != nil {
 			tasks = cfg.Engine.Rules()
 		}
-		writeEvent(conn, Event{Type: EventList, Tasks: tasks})
+		writeEvent(out, Event{Type: EventList, Tasks: tasks})
 		return
 	}
 	if len(req.ArgvB64) == 0 {
-		writeEvent(conn, Event{Type: EventError, Message: "malformed job request"})
+		writeEvent(out, Event{Type: EventError, Message: "malformed job request"})
 		return
 	}
 	argv := DecodeStrings(req.ArgvB64)
@@ -100,7 +105,7 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 		cfg.Audit(decision.Allow, strings.Join(argv, " "), decision.Reason)
 	}
 	if !decision.Allow {
-		writeEvent(conn, Event{Type: EventDenied, Message: decision.Reason})
+		writeEvent(out, Event{Type: EventDenied, Message: decision.Reason})
 		return
 	}
 
@@ -109,7 +114,7 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 			if cfg.Audit != nil {
 				cfg.Audit(false, strings.Join(argv, " "), fmt.Sprintf("trust verification failed: %v", err))
 			}
-			writeEvent(conn, Event{Type: EventDenied, Message: fmt.Sprintf("trust verification failed: %v", err)})
+			writeEvent(out, Event{Type: EventDenied, Message: fmt.Sprintf("trust verification failed: %v", err)})
 			return
 		}
 	}
@@ -118,17 +123,17 @@ func handleStream(ctx context.Context, conn net.Conn, cfg ServerConfig) {
 	if req.Dir != "" {
 		dir, err = jailDir(cfg.RepoRoot, req.Dir)
 		if err != nil {
-			writeEvent(conn, Event{Type: EventError, Message: err.Error()})
+			writeEvent(out, Event{Type: EventError, Message: err.Error()})
 			return
 		}
 	}
 
 	cmd, err := buildCommand(ctx, decision.Kind, argv, dir, cfg)
 	if err != nil {
-		writeEvent(conn, Event{Type: EventError, Message: err.Error()})
+		writeEvent(out, Event{Type: EventError, Message: err.Error()})
 		return
 	}
-	runJob(ctx, cmd, conn)
+	runJob(ctx, cmd, out)
 }
 
 // jailDir resolves a request-relative working directory against the repo
@@ -183,11 +188,11 @@ func buildCommand(ctx context.Context, kind Kind, argv []string, dir string, cfg
 
 // runJob streams stdout/stderr live, then reports the outcome. Jobs die
 // with their process group when the sandbox goes away.
-func runJob(ctx context.Context, cmd *exec.Cmd, conn net.Conn) {
+func runJob(ctx context.Context, cmd *exec.Cmd, out io.Writer) {
 	cmd.Dir = firstNonEmpty(cmd.Dir, ".")
 	cmd.Env = os.Environ() // host user env only; nothing from the sandbox
-	cmd.Stdout = &eventWriter{conn: conn, typ: EventStdout}
-	cmd.Stderr = &eventWriter{conn: conn, typ: EventStderr}
+	cmd.Stdout = &eventWriter{conn: out, typ: EventStdout}
+	cmd.Stderr = &eventWriter{conn: out, typ: EventStderr}
 
 	// Kill the whole process group when the context is cancelled or the
 	// WaitDelay expires, so grandchildren (test runners etc.) cannot
@@ -203,7 +208,7 @@ func runJob(ctx context.Context, cmd *exec.Cmd, conn net.Conn) {
 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			writeEvent(conn, Event{Type: EventError, Message: "job terminated: sandbox shut down"})
+			writeEvent(out, Event{Type: EventError, Message: "job terminated: sandbox shut down"})
 			return
 		}
 		var ee *exec.ExitError
@@ -217,13 +222,13 @@ func runJob(ctx context.Context, cmd *exec.Cmd, conn net.Conn) {
 					code = 128
 				}
 			}
-			writeEvent(conn, Event{Type: EventExit, Code: code})
+			writeEvent(out, Event{Type: EventExit, Code: code})
 			return
 		}
-		writeEvent(conn, Event{Type: EventError, Message: err.Error()})
+		writeEvent(out, Event{Type: EventError, Message: err.Error()})
 		return
 	}
-	writeEvent(conn, Event{Type: EventExit, Code: 0})
+	writeEvent(out, Event{Type: EventExit, Code: 0})
 }
 
 func firstNonEmpty(a, b string) string {
@@ -233,17 +238,14 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// eventWriter frames one output chunk per Write call. A mutex serializes
-// the two concurrent copy directions onto the single stream.
+// eventWriter frames one output chunk per Write call. Serialization happens in
+// lockedWriter, which stdout, stderr and status events share.
 type eventWriter struct {
 	conn io.Writer
 	typ  string
-	mu   sync.Mutex
 }
 
 func (w *eventWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	ev := Event{Type: w.typ, Data: base64.StdEncoding.EncodeToString(p)}
 	b, err := json.Marshal(ev)
 	if err != nil {
@@ -253,6 +255,18 @@ func (w *eventWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// lockedWriter serializes complete frames on one stream.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 func writeEvent(conn io.Writer, ev Event) {

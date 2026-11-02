@@ -14,18 +14,19 @@ import (
 // at 65535 bytes (RFC 1035 DNS message limit).
 const MaxSize = 65535
 
-// WriteFrame writes len(b) as a 2-byte big-endian prefix followed by b.
+// WriteFrame writes len(b) as a 2-byte big-endian prefix followed by b in a
+// single Write call. One call keeps a frame atomic for callers that serialize
+// concurrent writers only per Write: a split header/payload write can be
+// interleaved by another goroutine and corrupt the stream.
 func WriteFrame(w io.Writer, b []byte) error {
 	if len(b) > MaxSize {
 		return fmt.Errorf("frame: payload %d bytes exceeds %d limit", len(b), MaxSize)
 	}
-	var head [2]byte
-	binary.BigEndian.PutUint16(head[:], uint16(len(b))) // #nosec G115 -- bounded by MaxSize check above
-	if _, err := w.Write(head[:]); err != nil {
-		return fmt.Errorf("frame: write header: %w", err)
-	}
-	if _, err := w.Write(b); err != nil {
-		return fmt.Errorf("frame: write payload: %w", err)
+	buf := make([]byte, 2+len(b))
+	binary.BigEndian.PutUint16(buf[:2], uint16(len(b))) // #nosec G115 -- bounded by MaxSize check above
+	copy(buf[2:], b)
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("frame: write: %w", err)
 	}
 	return nil
 }
