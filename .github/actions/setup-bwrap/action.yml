@@ -1,0 +1,39 @@
+# Installs bubblewrap >= 0.11.0 (overlay mounts) for keg's unit and
+# integration tests. Shared by ci.yml and release.yml so the release gate
+# runs under the same preconditions as CI.
+name: Setup bubblewrap
+description: Install bubblewrap >= 0.11.0 and allow unprivileged user namespaces
+
+runs:
+  using: composite
+  steps:
+    - name: Enable unprivileged user namespaces
+      shell: bash
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+    - name: Cache bubblewrap
+      id: cache-bwrap
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/bwrap
+        key: bwrap-0.11.0-${{ runner.os }}
+    - name: Build bubblewrap >= 0.11
+      if: steps.cache-bwrap.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build libcap-dev libseccomp-dev pkg-config
+        rm -rf /tmp/bwrap
+        git clone --depth 1 --branch v0.11.0 https://github.com/containers/bubblewrap.git /tmp/bwrap
+        cd /tmp/bwrap
+        meson setup _build --prefix=/usr
+        ninja -C _build
+        mkdir -p ~/.cache/bwrap
+        cp _build/bwrap ~/.cache/bwrap/bwrap
+        rm -rf /tmp/bwrap
+    - name: Install bubblewrap
+      shell: bash
+      run: |
+        sudo install -m 0755 ~/.cache/bwrap/bwrap /usr/bin/bwrap
+        sudo ln -sf /usr/bin/bwrap /usr/local/bin/bwrap
+        sudo ln -sf /usr/bin/bwrap /usr/sbin/bwrap
+        bwrap --version

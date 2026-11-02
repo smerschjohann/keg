@@ -35,6 +35,7 @@ jobs:
             echo "::error::tag '$TAG' is not a semver tag (vX.Y.Z)"
             exit 1
           fi
+      - uses: ./.github/actions/setup-bwrap
       - name: Check module tidiness
         run: make tidy
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
