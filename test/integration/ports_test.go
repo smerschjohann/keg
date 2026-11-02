@@ -15,7 +15,7 @@ import (
 	"github.com/smerschjohann/keg/internal/orchestrator"
 	"github.com/smerschjohann/keg/internal/portsfw"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // TestSandboxPortBackChannel is the WP-M4 §6.4 DoD test ("Playwright-

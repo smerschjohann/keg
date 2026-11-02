@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // Transparent mode: the workload ignores HTTP_PROXY, so the stage builds a

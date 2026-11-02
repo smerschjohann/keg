@@ -8,7 +8,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/frame"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // Serve is the host-side endpoint of egress channel B: it accepts muxado

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // startEchoPeer accepts streams on the host-side session and echoes the

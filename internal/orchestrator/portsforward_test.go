@@ -11,7 +11,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/portsfw"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // echoListener starts a tiny TCP echo server on 127.0.0.1:0.

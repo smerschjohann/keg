@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // DefaultDialTimeout bounds the guest-side connect to the sandbox service.

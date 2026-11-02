@@ -15,7 +15,7 @@ import (
 	"github.com/smerschjohann/keg/internal/runner"
 
 	"github.com/moby/sys/reexec"
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // EnvProxyBridge marks a live egress-proxy session on fd FDProxy. Its value

@@ -15,7 +15,7 @@ import (
 
 	miek "github.com/miekg/dns"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // rawSocketpair returns an AF_UNIX SOCK_STREAM pair as read-write-closers.

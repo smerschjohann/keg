@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // Bridge serves the guest end of delegation channel C: it accepts

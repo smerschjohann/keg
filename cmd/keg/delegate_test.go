@@ -13,7 +13,7 @@ import (
 	"github.com/smerschjohann/keg/internal/config"
 	"github.com/smerschjohann/keg/internal/runner"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // fakeRunnerDaemon mirrors the production topology of delegation channel C:

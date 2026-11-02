@@ -8,7 +8,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // TestChannelF_EndToEnd tunnels a guest-side TCP connection through a real

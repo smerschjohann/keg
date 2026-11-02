@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // DefaultDialTimeout bounds target and upstream dial attempts.

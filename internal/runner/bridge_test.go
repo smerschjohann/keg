@@ -11,7 +11,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 func TestBridge_EndToEndClientThroughSocket(t *testing.T) {

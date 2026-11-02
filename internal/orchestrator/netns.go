@@ -13,7 +13,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/egress/dns"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 
 	"github.com/moby/sys/reexec"
 )

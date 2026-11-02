@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // DefaultBridgeAddr is the loopback address the guest-side proxy bridge

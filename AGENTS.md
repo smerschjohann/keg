@@ -46,7 +46,7 @@ Stdlib zuerst. Das Budget steht in `IMPLEMENTATION_PLAN.md` §1 und ist
 |---|---|
 | `github.com/urfave/cli/v3` | CLI-Rahmen (Projektvorgabe) |
 | `github.com/moby/sys/reexec` | Self-Start |
-| `golang.ngrok.com/muxado` | Multiplexing |
+| `golang.ngrok.com/muxado/v2` | Multiplexing |
 | `gopkg.in/yaml.v3` | Config |
 | `github.com/miekg/dns` | DNS |
 | `golang.org/x/sys` | Landlock |

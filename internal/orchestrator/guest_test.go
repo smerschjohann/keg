@@ -15,7 +15,7 @@ import (
 	"github.com/smerschjohann/keg/internal/landlock"
 
 	"github.com/moby/sys/reexec"
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // TestGuestCommandNames verifies that internal reexec / entrypoint command

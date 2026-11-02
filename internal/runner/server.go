@@ -18,7 +18,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/frame"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // ServerConfig wires the host-side delegation daemon (Kanal C). The daemon

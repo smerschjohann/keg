@@ -12,7 +12,7 @@ import (
 
 	"github.com/smerschjohann/keg/internal/config"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // FormatForwardHosts converts a slice of ForwardHostSpec into a comma-separated string

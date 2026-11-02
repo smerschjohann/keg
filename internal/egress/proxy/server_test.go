@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 func TestServer_CONNECTAllowed(t *testing.T) {

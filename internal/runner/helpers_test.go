@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"testing"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // socketpairTCP returns the ends of an AF_UNIX SOCK_STREAM socketpair.

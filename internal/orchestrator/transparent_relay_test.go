@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // fakeOrigin serves one muxado session like the host-side policy proxy:

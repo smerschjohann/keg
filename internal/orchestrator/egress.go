@@ -17,7 +17,7 @@ import (
 	"github.com/smerschjohann/keg/internal/portsfw"
 	"github.com/smerschjohann/keg/internal/runner"
 
-	"golang.ngrok.com/muxado"
+	"golang.ngrok.com/muxado/v2"
 )
 
 // ProxyEnv returns the environment entries enabling egress channel A for
