@@ -19,6 +19,27 @@
 
 ---
 
+## 1.1 Offizielle Images
+
+Releases veröffentlichen zwei Multi-Arch-Images (`amd64`/`arm64`) auf GHCR:
+
+| Tag | Inhalt | Zweck |
+|---|---|---|
+| `<tag>`, `latest` | `FROM scratch`: ausschließlich das statisch gelinkte `keg`-Binary (~11.6 MB) | Binär-Transport (`docker cp`, CI-Basis-Images); **keine** Sandbox-Läufe (kein `bwrap`, kein Userland, keine CA/TMPDIR — das bräuchte nur `keg run`, das ohne `bwrap` ohnehin scheitert) |
+| `<tag>-runtime`, `latest-runtime` | `debian:trixie-slim` + `bubblewrap ≥ 0.11`, `unshare` (util-linux), `ip` (iproute2), `nft` (nftables), CA-Bundle + `keg` (~105 MB) | `keg` inklusive Sandbox-Läufen im Container |
+
+Das Runtime-Image erzwingt beim Build `bwrap --version >= 0.11` (Overlay-Mounts,
+§1) und enthält nur die Host-Toolchain, die `keg` selbst aufruft. Job-Tools
+(`go`, `just`, …) kommen aus dem Repository bzw. werden an den Host delegiert.
+Herkunftsnachweis für beide Images:
+
+```bash
+gh attestation verify oci://ghcr.io/smerschjohann/keg:<tag> --repo smerschjohann/keg
+gh attestation verify oci://ghcr.io/smerschjohann/keg:<tag>-runtime --repo smerschjohann/keg
+```
+
+---
+
 ## 2. Start-Konfigurationen (Praxis-Beispiele)
 
 ### A. Standard-Betrieb (Empfohlen für Docker / Kubernetes / CI)
@@ -31,10 +52,11 @@ docker run --rm -it \
   --security-opt seccomp=unconfined \
   -v $(pwd):/workspace \
   -w /workspace \
-  mein-keg-image:latest
+  ghcr.io/smerschjohann/keg:<tag>-runtime
 ```
 
 > **Wichtig:** `--cap-add=SYS_ADMIN` reicht in der Regel völlig aus. Der Container benötigt **kein** unsicheres `--privileged`.
+> In rootless-/Podman-Setups kann `bwrap` trotzdem mit `Can't mount proc on /proc: Operation not permitted` scheitern; dort ist `--privileged` (bewusst und nur dort) oder der direkte Betrieb auf dem Host nötig.
 
 ---
 
@@ -51,7 +73,7 @@ podman run --rm -it \
   --userns=keep-id \
   -v $(pwd):/workspace \
   -w /workspace \
-  mein-keg-image:latest
+  ghcr.io/smerschjohann/keg:<tag>-runtime
 ```
 
 ---
@@ -68,7 +90,7 @@ metadata:
 spec:
   containers:
     - name: runner
-      image: mein-keg-image:latest
+      image: ghcr.io/smerschjohann/keg:<tag>-runtime
       securityContext:
         capabilities:
           add:
