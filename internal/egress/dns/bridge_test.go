@@ -2,6 +2,7 @@ package dns
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -232,5 +233,32 @@ func TestBridge_UDPLoad100(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Errorf("parallel query failed: %v", err)
+	}
+}
+
+func TestBridge_FirstFailure(t *testing.T) {
+	boom := errors.New("boom")
+	closed := errors.New("use of closed network connection")
+
+	tests := []struct {
+		name    string
+		results [2]error
+		want    error
+	}{
+		{"both clean", [2]error{nil, nil}, nil},
+		{"teardown only", [2]error{closed, nil}, nil},
+		{"first failure", [2]error{boom, nil}, boom},
+		{"second failure", [2]error{nil, boom}, boom},
+		{"failure plus teardown", [2]error{closed, boom}, boom},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errCh := make(chan error, 2)
+			errCh <- tt.results[0]
+			errCh <- tt.results[1]
+			if got := firstFailure(errCh); !errors.Is(got, tt.want) {
+				t.Fatalf("firstFailure() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

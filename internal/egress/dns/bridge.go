@@ -71,16 +71,19 @@ func (b *Bridge) Serve() error {
 	go func() { defer wg.Done(); errCh <- b.serveUDP() }()
 	go func() { defer wg.Done(); errCh <- b.serveTCP() }()
 	wg.Wait()
-	<-errCh // first error wins; second is a duplicate teardown signal
-	select {
-	case err := <-errCh:
-		if isClosed(err) {
-			return nil
+	return firstFailure(errCh)
+}
+
+// firstFailure drains the results of both serve loops and reports the first
+// real failure. Teardown-induced errors (closed listener or session) carry no
+// information and are skipped.
+func firstFailure(errs <-chan error) error {
+	for range 2 {
+		if err := <-errs; err != nil && !isClosed(err) {
+			return err
 		}
-		return err
-	default:
-		return nil
 	}
+	return nil
 }
 
 // Close stops all listeners and waits for in-flight exchanges.

@@ -2,6 +2,9 @@ package landlock
 
 import (
 	"testing"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestLandlock_ModeOff(t *testing.T) {
@@ -44,5 +47,17 @@ func TestLandlock_ModeOn(t *testing.T) {
 	}
 	if !avail && err == nil {
 		t.Fatal("ModeOn on unsupported kernel must return error")
+	}
+}
+
+func TestLandlockRulesetAttrSize_OnlyHandledAccessFS(t *testing.T) {
+	// The kernel rejects a ruleset attribute that is larger than the struct it
+	// knows with E2BIG (copy_min_struct_from_user). x/sys grows the struct with
+	// every newer kernel ABI, so passing unsafe.Sizeof(attr) would silently
+	// disable Landlock on kernels that only know the smaller layout. keg only
+	// populates handled_access_fs (ABI 1), so the size must stay at that width.
+	want := unsafe.Sizeof(unix.LandlockRulesetAttr{}.Handled_access_fs)
+	if landlockRulesetAttrSize != want {
+		t.Fatalf("ruleset attr size = %d, want %d (handled_access_fs only)", landlockRulesetAttrSize, want)
 	}
 }

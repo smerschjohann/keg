@@ -27,6 +27,12 @@ type RulesetConfig struct {
 	WritableDirs []string // Directories with read, write, create, truncate permissions
 }
 
+// landlockRulesetAttrSize is the ABI length of the ruleset attribute keg
+// actually populates: handled_access_fs only. The kernel answers E2BIG when
+// the passed size exceeds the struct it knows, and x/sys grows the struct with
+// every new kernel ABI, so this must not become unsafe.Sizeof(attr).
+const landlockRulesetAttrSize = unsafe.Sizeof(unix.LandlockRulesetAttr{}.Handled_access_fs)
+
 func landlockCreateRuleset(attr *unix.LandlockRulesetAttr, size uintptr, flags uint32) (int, error) {
 	var attrPtr uintptr
 	if attr != nil {
@@ -111,10 +117,10 @@ func Restrict(cfg RulesetConfig) error {
 	)
 
 	attr := unix.LandlockRulesetAttr{
-		Access_fs: writeMask,
+		Handled_access_fs: writeMask,
 	}
 
-	fd, err := landlockCreateRuleset(&attr, unsafe.Sizeof(attr), 0)
+	fd, err := landlockCreateRuleset(&attr, landlockRulesetAttrSize, 0)
 	if err != nil {
 		if cfg.Mode == ModeOn {
 			return fmt.Errorf("landlock_create_ruleset: %w", err)

@@ -1083,6 +1083,14 @@ Verhalten: Feature-Detection beim Start; fehlt Kernel-Support ⇒ Warnung +
 Weiter ohne Landlock (best effort, kein Harter Fehler), konfigurierbar via
 User-Config (`security.landlock: auto | on | off`).
 
+**ABI-Kompatibilität:** `landlock_create_ruleset` bekommt ausschließlich die
+Größe der Felder, die keg tatsächlich setzt (`handled_access_fs`). Der Kernel
+lehnt ein Attribut ab, das größer ist als die Struktur, die er kennt
+(`E2BIG`); da `golang.org/x/sys` die Struktur mit jedem neuen Kernel-ABI
+erweitert, würde `unsafe.Sizeof(attr)` Landlock auf älteren Kernen
+stillschweigend abschalten (Test:
+`TestLandlockRulesetAttrSize_OnlyHandledAccessFS`).
+
 ---
 
 ## 7. Nutzung (Ziel-UX)
